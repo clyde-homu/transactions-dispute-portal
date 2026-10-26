@@ -35,8 +35,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Builds the demo disputes by driving each one through {@link DisputeStateMachine}, so the seeded timelines carry the
- * same statuses, timestamps and audit rows that real use would. Back-office steps are recorded as the AGENT role with no
- * actor id, because no agent users exist.
+ * same statuses, timestamps and audit rows that real use would. Back-office steps are recorded as the demo agent, who
+ * also becomes the assignee of every dispute she claims.
  *
  * <p>Transactions are chosen from the customer's own ledger, never named, so the data stays valid whatever day it is
  * loaded: only debits the eligibility policy accepts, at least a day older than the dispute, and never one of the newest
@@ -75,9 +75,10 @@ final class DemoDisputeSeeder {
     /**
      * Seeds the customer's disputes unless they already have any, so running it again adds nothing.
      *
+     * @param agent the back-office user who performs the claim, information request and resolution steps
      * @return how many disputes were created
      */
-    int seedFor(AppUser customer, List<DisputeSpec> specs, Instant now) {
+    int seedFor(AppUser customer, AppUser agent, List<DisputeSpec> specs, Instant now) {
         if (specs.isEmpty() || disputes.existsByCustomerId(customer.getId())) {
             return 0;
         }
@@ -94,7 +95,7 @@ final class DemoDisputeSeeder {
                 continue;
             }
             alreadyUsed.add(transaction.get().getId());
-            disputes.save(build(customer.getId(), spec, transaction.get(), raisedAt));
+            disputes.save(build(customer.getId(), agent.getId(), spec, transaction.get(), raisedAt));
             created++;
         }
         return created;
@@ -121,7 +122,8 @@ final class DemoDisputeSeeder {
                 .max(Comparator.comparing(BankTransaction::getPostedAt));
     }
 
-    private Dispute build(UUID customerId, DisputeSpec spec, BankTransaction transaction, Instant raisedAt) {
+    private Dispute build(
+            UUID customerId, UUID agentId, DisputeSpec spec, BankTransaction transaction, Instant raisedAt) {
         BigDecimal amount = transaction
                 .getAmount()
                 .multiply(BigDecimal.valueOf(spec.percentOfAmount()))
@@ -140,8 +142,9 @@ final class DemoDisputeSeeder {
         Dispute dispute = machineAt(at).create(request, Actor.customer(customerId));
         for (DisputeStep step : spec.steps()) {
             at = at.plus(step.after());
-            Actor actor = step.action().actor() == ActorRole.CUSTOMER ? Actor.customer(customerId) : Actor.agent();
-            machineAt(at).apply(dispute, step.action(), actor, step.message());
+            Actor actor =
+                    step.action().actor() == ActorRole.CUSTOMER ? Actor.customer(customerId) : Actor.agent(agentId);
+            machineAt(at).apply(dispute, step.action(), actor, step.message(), step.internalNote());
         }
         return dispute;
     }

@@ -56,6 +56,7 @@ class DisputeServiceTest {
     private static final UUID CUSTOMER = UUID.fromString("6d0b8a51-3f2c-4e7a-9b14-0c5e2f7a9d31");
     private static final UUID TRANSACTION_ID = UUID.fromString("5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d");
     private static final UUID DISPUTE_ID = UUID.fromString("0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f");
+    private static final UUID AGENT = UUID.fromString("3b9a7c52-1d4e-4f68-a0b3-7c8d9e0f1a2b");
 
     private final DisputeRepository disputes = mock(DisputeRepository.class);
     private final BankTransactionRepository transactions = mock(BankTransactionRepository.class);
@@ -339,6 +340,62 @@ class DisputeServiceTest {
         verify(disputes, never()).findDetailById(any(), any());
     }
 
+    // ---- respond ----
+
+    @Test
+    void respondAnswersTheInformationRequestAndSendsTheDisputeBackToReview() {
+        Dispute dispute = dispute(DisputeStatus.AWAITING_CUSTOMER_INFO);
+        when(disputes.findOwnedByIdForUpdate(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.of(dispute));
+        when(disputes.findDetailById(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.of(dispute));
+
+        DisputeView view = service.respond(CUSTOMER, DISPUTE_ID, "  Here is the till slip.  ");
+
+        assertThat(view.dispute().getStatus()).isEqualTo(DisputeStatus.UNDER_REVIEW);
+        assertThat(view.transactionDisputeStatus()).isEqualTo(DisputeStatus.UNDER_REVIEW);
+        DisputeEvent last = dispute.getEvents().getLast();
+        assertThat(last.getFromStatus()).isEqualTo(DisputeStatus.AWAITING_CUSTOMER_INFO);
+        assertThat(last.getToStatus()).isEqualTo(DisputeStatus.UNDER_REVIEW);
+        assertThat(last.getActorId()).isEqualTo(CUSTOMER);
+        assertThat(last.getMessage()).isEqualTo("Here is the till slip.");
+        assertThat(dispute.getAssignedAgentId())
+                .as("the same agent keeps the dispute")
+                .isEqualTo(AGENT);
+    }
+
+    @Test
+    void respondLocksTheDisputeBeforeLoadingItsDetail() {
+        Dispute dispute = dispute(DisputeStatus.AWAITING_CUSTOMER_INFO);
+        when(disputes.findOwnedByIdForUpdate(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.of(dispute));
+        when(disputes.findDetailById(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.of(dispute));
+
+        service.respond(CUSTOMER, DISPUTE_ID, "Here it is.");
+
+        var order = inOrder(disputes);
+        order.verify(disputes).findOwnedByIdForUpdate(DISPUTE_ID, CUSTOMER);
+        order.verify(disputes).findDetailById(DISPUTE_ID, CUSTOMER);
+    }
+
+    @Test
+    void respondingWhenNobodyAskedIsAnInvalidTransition() {
+        Dispute dispute = dispute(DisputeStatus.UNDER_REVIEW);
+        when(disputes.findOwnedByIdForUpdate(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.of(dispute));
+        when(disputes.findDetailById(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.of(dispute));
+
+        assertThatThrownBy(() -> service.respond(CUSTOMER, DISPUTE_ID, "Unprompted."))
+                .isInstanceOf(InvalidDisputeTransitionException.class)
+                .hasMessage("A dispute in status UNDER_REVIEW cannot be answered.");
+        assertThat(dispute.getStatus()).isEqualTo(DisputeStatus.UNDER_REVIEW);
+    }
+
+    @Test
+    void respondingToADisputeThatIsNotTheCallersIsNotFound() {
+        when(disputes.findOwnedByIdForUpdate(DISPUTE_ID, CUSTOMER)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.respond(CUSTOMER, DISPUTE_ID, "Hello."))
+                .isInstanceOf(NotFoundException.class);
+        verify(disputes, never()).findDetailById(any(), any());
+    }
+
     // ---- helpers ----
 
     private static CreateDisputeCommand command(String amount) {
@@ -381,10 +438,20 @@ class DisputeServiceTest {
         ReflectionTestUtils.setField(dispute, "id", DISPUTE_ID);
         switch (target) {
             case SUBMITTED -> {}
-            case UNDER_REVIEW -> stateMachine.apply(dispute, DisputeAction.CLAIM, Actor.agent(), null);
+            case UNDER_REVIEW -> stateMachine.apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT), null);
+            case AWAITING_CUSTOMER_INFO -> {
+                stateMachine.apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT), null);
+                stateMachine.apply(
+                        dispute, DisputeAction.REQUEST_INFO, Actor.agent(AGENT), "Please send the till slip.");
+            }
             case RESOLVED_DECLINED -> {
-                stateMachine.apply(dispute, DisputeAction.CLAIM, Actor.agent(), null);
-                stateMachine.apply(dispute, DisputeAction.RESOLVE_DECLINED, Actor.agent(), "Declined.");
+                stateMachine.apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT), null);
+                stateMachine.apply(
+                        dispute,
+                        DisputeAction.RESOLVE_DECLINED,
+                        Actor.agent(AGENT),
+                        "Declined.",
+                        "Merchant proved delivery.");
             }
             case WITHDRAWN -> stateMachine.apply(dispute, DisputeAction.WITHDRAW, Actor.customer(CUSTOMER), null);
             default -> throw new IllegalArgumentException(target.name());

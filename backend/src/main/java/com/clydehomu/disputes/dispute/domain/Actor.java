@@ -4,8 +4,8 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Who is asking for a transition. Agent and system actors carry no id in this version because no agent users exist; the
- * timeline still records the role.
+ * Who is asking for a transition. Customers and agents are identified by their user id, which is how the state machine
+ * checks ownership and assignment. System actors carry no id; the timeline still records the role.
  */
 public record Actor(ActorRole role, UUID id) {
 
@@ -17,8 +17,8 @@ public record Actor(ActorRole role, UUID id) {
         return new Actor(ActorRole.CUSTOMER, Objects.requireNonNull(customerId, "customerId"));
     }
 
-    public static Actor agent() {
-        return new Actor(ActorRole.AGENT, null);
+    public static Actor agent(UUID agentId) {
+        return new Actor(ActorRole.AGENT, Objects.requireNonNull(agentId, "agentId"));
     }
 
     public static Actor system() {

@@ -31,9 +31,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Loads the demo customers, accounts, transaction history and disputes when the application starts and
+ * Loads the demo customers, the demo agent, accounts, transaction history and disputes when the application starts and
  * {@code app.seed.enabled} is true. Safe to run on every start: if the first demo customer already exists their ledgers
- * are left alone, and a customer who already has disputes gets no more.
+ * are left alone, the agent is added if she is missing, and a customer who already has disputes gets no more.
  *
  * <p>The random generator is seeded with a constant, so every run produces the same amounts and merchants; only the
  * dates move, because they are computed back from the clock.
@@ -84,8 +84,11 @@ public class DemoDataSeeder {
         } else {
             seedLedgers(now);
         }
+        // The agent is looked up on its own, so a database loaded before the back office existed gains her on the next
+        // start without anything else being duplicated.
+        AppUser agent = ensureAgent(now);
         // Checked per customer, so a database loaded before disputes existed gets them without being wiped.
-        int disputeCount = seedDisputes(now);
+        int disputeCount = seedDisputes(now, agent);
         if (disputeCount > 0) {
             log.info("Seeded demo data: {} disputes", disputeCount);
         }
@@ -102,12 +105,24 @@ public class DemoDataSeeder {
         log.info("Seeded demo data: {} customers, {} transactions", DemoCatalogue.CUSTOMERS.size(), transactionCount);
     }
 
-    private int seedDisputes(Instant now) {
+    private AppUser ensureAgent(Instant now) {
+        return users.findByUsername(DemoCatalogue.AGENT_USERNAME).orElseGet(() -> {
+            log.info("Seeded demo agent {}", DemoCatalogue.AGENT_USERNAME);
+            return users.save(new AppUser(
+                    DemoCatalogue.AGENT_USERNAME,
+                    passwordEncoder.encode(properties.demo().password()),
+                    DemoCatalogue.AGENT_DISPLAY_NAME,
+                    Role.AGENT,
+                    now.minus(ACCOUNT_AGE)));
+        });
+    }
+
+    private int seedDisputes(Instant now, AppUser agent) {
         int count = 0;
         for (CustomerSpec spec : DemoCatalogue.CUSTOMERS) {
             Optional<AppUser> customer = users.findByUsername(spec.username());
             if (customer.isPresent()) {
-                count += disputeSeeder.seedFor(customer.get(), spec.disputes(), now);
+                count += disputeSeeder.seedFor(customer.get(), agent, spec.disputes(), now);
             }
         }
         return count;

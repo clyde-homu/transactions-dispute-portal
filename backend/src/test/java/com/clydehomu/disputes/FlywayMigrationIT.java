@@ -17,11 +17,12 @@ class FlywayMigrationIT extends PostgresIntegrationSupport {
     private JdbcTemplate jdbc;
 
     @Test
-    void flywayAppliedTheInitialMigrationOnPostgres() {
-        Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '1' and success", Integer.class);
+    void flywayAppliedBothMigrationsOnPostgres() {
+        List<String> applied = jdbc.queryForList(
+                "select version from flyway_schema_history where success and version is not null order by installed_rank",
+                String.class);
 
-        assertThat(applied).isEqualTo(1);
+        assertThat(applied).containsExactly("1", "2");
     }
 
     @Test
@@ -42,7 +43,24 @@ class FlywayMigrationIT extends PostgresIntegrationSupport {
                         "ix_bank_transaction_account_posted",
                         "ix_dispute_customer_created",
                         "ix_dispute_transaction",
+                        "ix_dispute_status_created",
                         "ix_dispute_event_dispute_created");
+    }
+
+    @Test
+    void theAgentColumnsAreNullableAndTheAssigneeMustBeARealUser() {
+        List<String> nullable = jdbc.queryForList("""
+                select table_name || '.' || column_name from information_schema.columns
+                where table_schema = 'public' and is_nullable = 'YES'
+                  and column_name in ('assigned_agent_id', 'note_internal')
+                order by 1
+                """, String.class);
+
+        assertThat(nullable).containsExactly("dispute.assigned_agent_id", "dispute_event.note_internal");
+        assertThatThrownBy(() -> jdbc.update(
+                        "update dispute set assigned_agent_id = ? where id = (select id from dispute limit 1)",
+                        UUID.randomUUID()))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

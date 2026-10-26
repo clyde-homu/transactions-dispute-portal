@@ -77,6 +77,11 @@ public class Dispute {
     @Column(name = "resolved_at")
     private Instant resolvedAt;
 
+    // Null until an agent claims the dispute; kept after resolution so the history shows who decided it. A plain id
+    // like customerId: names are looked up when a back-office view needs them.
+    @Column(name = "assigned_agent_id")
+    private UUID assignedAgentId;
+
     @Version
     @Column(nullable = false)
     private long version;
@@ -107,6 +112,11 @@ public class Dispute {
         if (next.isClosed()) {
             this.resolvedAt = now;
         }
+    }
+
+    /** Hands the dispute to the agent who claimed it. */
+    void assignTo(UUID agentId) {
+        this.assignedAgentId = agentId;
     }
 
     void addEvent(DisputeEvent event) {
@@ -159,6 +169,10 @@ public class Dispute {
 
     public Instant getResolvedAt() {
         return resolvedAt;
+    }
+
+    public UUID getAssignedAgentId() {
+        return assignedAgentId;
     }
 
     public long getVersion() {

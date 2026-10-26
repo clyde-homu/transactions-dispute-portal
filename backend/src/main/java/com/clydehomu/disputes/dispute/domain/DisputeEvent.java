@@ -37,7 +37,7 @@ public class DisputeEvent {
     @Column(name = "actor_role", nullable = false, length = 20)
     private ActorRole actorRole;
 
-    // Null for seeded agent and system events: there are no agent users yet.
+    // Null only for system events.
     @Column(name = "actor_id")
     private UUID actorId;
 
@@ -53,6 +53,10 @@ public class DisputeEvent {
     @Column(length = 1000)
     private String message;
 
+    // Back-office only: the customer response has no field that could carry it.
+    @Column(name = "note_internal", length = 1000)
+    private String internalNote;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -64,6 +68,7 @@ public class DisputeEvent {
             DisputeStatus fromStatus,
             DisputeStatus toStatus,
             String message,
+            String internalNote,
             Instant createdAt) {
         this.dispute = dispute;
         this.actorRole = actor.role();
@@ -71,6 +76,7 @@ public class DisputeEvent {
         this.fromStatus = fromStatus;
         this.toStatus = toStatus;
         this.message = message;
+        this.internalNote = internalNote;
         this.createdAt = createdAt;
     }
 
@@ -96,6 +102,10 @@ public class DisputeEvent {
 
     public String getMessage() {
         return message;
+    }
+
+    public String getInternalNote() {
+        return internalNote;
     }
 
     public Instant getCreatedAt() {
