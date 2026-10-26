@@ -2,12 +2,16 @@
 target/
 *.class
 *.log
+hs_err_pid*
+.flattened-pom.xml
+.mvn/wrapper/maven-wrapper.jar
 
 # Node / Quasar
 node_modules/
 dist/
 .quasar/
 coverage/
+*.tsbuildinfo
 playwright-report/
 test-results/
 blob-report/
@@ -15,8 +19,15 @@ blob-report/
 # IDEs (the shared extension recommendations stay tracked)
 .idea/
 *.iml
-.vscode/*
-!.vscode/extensions.json
+*.iws
+*.ipr
+.classpath
+.project
+.settings/
+.factorypath
+**/.vscode/*
+!**/.vscode/extensions.json
+*.swp
 
 # OS files
 .DS_Store

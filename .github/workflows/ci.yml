@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer run for the same ref makes the older one pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (verify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      # Unit and web slice tests, then the Testcontainers integration tests (the runner has Docker),
+      # the JaCoCo coverage gate and the Spotless format check.
+      - name: Build and test
+        run: ./mvnw -B verify
+
+      - name: Upload JaCoCo report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-report
+          path: backend/target/site/jacoco
+          if-no-files-found: warn
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-test-reports
+          path: |
+            backend/target/surefire-reports
+            backend/target/failsafe-reports
+          if-no-files-found: ignore
+
+  frontend:
+    name: Frontend (lint, types, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm run test:unit:coverage
+      - run: npm run build
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
+          if-no-files-found: ignore
+
+  image:
+    name: Image (standalone and compose)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the image
+        run: |
+          docker build \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t dispute-portal .
+
+      - name: Image runs as a non-root user
+        run: |
+          uid=$(docker run --rm --entrypoint id dispute-portal -u)
+          echo "Image user id: ${uid}"
+          test "${uid}" = "10001"
+
+      # Standalone mode: no DB_URL, so the application runs on in-memory H2.
+      - name: Run standalone
+        run: docker run -d --name dispute-portal-standalone -p 8080:8080 dispute-portal
+
+      - name: Standalone reports healthy and serves the SPA
+        run: |
+          bash .github/scripts/wait-for-health.sh http://localhost:8080 120
+          bash .github/scripts/check-app.sh http://localhost:8080
+
+      - name: Standalone logs
+        if: failure()
+        run: docker logs dispute-portal-standalone
+
+      - name: Stop standalone
+        if: always()
+        run: docker rm -f dispute-portal-standalone
+
+      # Full stack: the same image against PostgreSQL, with the demo data seeded.
+      - name: Start compose stack
+        run: docker compose up -d --build
+
+      - name: Compose stack reports healthy and serves the SPA
+        run: |
+          bash .github/scripts/wait-for-health.sh http://localhost:8080 120
+          bash .github/scripts/check-app.sh http://localhost:8080
+
+      - name: Compose logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose down -v

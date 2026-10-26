@@ -1,0 +1,9 @@
+node_modules
+.quasar
+/dist
+/coverage
+/playwright-report
+/test-results
+/quasar.config.*.temporary.compiled*
+.env*
+npm-debug.log*

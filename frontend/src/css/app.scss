@@ -1,0 +1,61 @@
+// Global styles. Kept small on purpose: layout and colour come from Quasar components and the
+// tokens in quasar.variables.scss.
+
+:root {
+  --app-muted: #{$muted};
+  --app-focus: #{$focus-ring};
+}
+
+// Dark mode follows the operating system. Primary is navy, which disappears on a dark surface,
+// so it is lightened and filled buttons switch to dark text to keep their contrast.
+body.body--dark {
+  --q-primary: #{$primary-on-dark};
+  --app-muted: #{$muted-on-dark};
+  --app-focus: #{$focus-ring-on-dark};
+
+  .q-btn.bg-primary {
+    color: $dark-page !important;
+  }
+}
+
+.muted {
+  color: var(--app-muted);
+}
+
+// Amounts line up in columns when digits have equal width.
+.money {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.page-content {
+  max-width: 60rem;
+  margin-inline: auto;
+}
+
+// Visible focus for keyboard users on every interactive element. Quasar fields already draw their
+// own focus border, so the inner native input is left alone to avoid a double outline.
+:focus-visible {
+  outline: 3px solid var(--app-focus);
+  outline-offset: 2px;
+}
+
+.q-field__native:focus-visible,
+.q-field__input:focus-visible {
+  outline: none;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  padding: 0.75rem 1rem;
+  background: $primary;
+  color: #fff;
+  transform: translateY(-120%);
+
+  &:focus {
+    transform: translateY(0);
+  }
+}

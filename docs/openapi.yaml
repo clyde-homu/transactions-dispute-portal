@@ -1,0 +1,1297 @@
+openapi: 3.1.0
+info:
+  title: Dispute Portal API
+  version: 1.1.0
+  summary: Customers view their bank transactions, dispute them and follow their dispute history.
+  description: |
+    REST API behind the Dispute Portal single-page app. The SPA and the API are served from the
+    same origin by one Spring Boot application, so there is no CORS configuration.
+
+    **Authentication.** Session cookie (`JSESSIONID`, HttpOnly, SameSite=Lax) created by
+    `POST /auth/login`. Every unsafe request (POST) must send the `X-XSRF-TOKEN` header echoing the
+    value of the `XSRF-TOKEN` cookie. The SPA calls `GET /auth/csrf` on boot to obtain that cookie,
+    and must always read the latest cookie value because it is rotated on login and logout.
+
+    **Errors.** Every 4xx/5xx is an RFC 9457 problem (`application/problem+json`) with a stable
+    `code`. Clients branch on `code`, never on `title` or `detail`. `errors[]` is present only for
+    `VALIDATION_FAILED`.
+
+    **Ownership.** A customer only ever sees their own accounts, transactions and disputes.
+    Another customer's resource returns `404 NOT_FOUND`, never `403`, so IDs cannot be probed.
+
+    **Conventions.** IDs are UUIDs. Money is a JSON string with exactly two decimals
+    (`"1250.00"`) next to an ISO-4217 `currency`; amounts are always positive and `direction`
+    says whether money left or entered the account. Timestamps are ISO-8601 with offset and are
+    stored in UTC. Lists are newest first and paginated (`page` 0-based, `size` 1..100,
+    default 20).
+
+    **Scope of this version.** Customer role only. The agent back office, evidence uploads,
+    idempotency keys, ETag/If-Match and SLA dates are deferred (see ADR 0005).
+
+    **Operational endpoints** (outside `/api/v1`, not described here): Swagger UI at
+    `/swagger-ui.html`, this document at `/v3/api-docs`, health at `/actuator/health`
+    with `/actuator/health/liveness` and `/actuator/health/readiness`.
+servers:
+  - url: /api/v1
+    description: Same origin as the SPA.
+tags:
+  - name: auth
+    description: Session login, logout, CSRF token and current user.
+  - name: accounts
+    description: The signed-in customer's accounts and their transactions.
+  - name: transactions
+    description: Transaction detail and dispute eligibility.
+  - name: disputes
+    description: Reason catalogue, raising a dispute, dispute history and withdrawal.
+
+security:
+  - sessionCookie: []
+
+paths:
+  /auth/csrf:
+    get:
+      tags: [auth]
+      operationId: getCsrfToken
+      summary: Issue the XSRF-TOKEN cookie needed by every unsafe request.
+      security: []
+      responses:
+        '204':
+          description: CSRF cookie issued.
+          headers:
+            Set-Cookie:
+              description: '`XSRF-TOKEN=<token>; Path=/; SameSite=Lax` (readable by JavaScript by design).'
+              schema:
+                type: string
+              example: XSRF-TOKEN=4f1c2e9a-8b7d-4c3e-9a51-2d0f6b8e7c11; Path=/; SameSite=Lax
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Sign in with username and password and start a session.
+      description: |
+        Five failed attempts for the same username within 15 minutes block further attempts for that
+        username (correct password or not) until the window passes. The counter is in memory, so it
+        resets on restart. A successful login rotates the session id and the CSRF token.
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              username: thandi
+              password: demo-password
+      responses:
+        '200':
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: New `JSESSIONID` (HttpOnly) and a rotated `XSRF-TOKEN`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+              example:
+                id: 6d0b8a51-3f2c-4e7a-9b14-0c5e2f7a9d31
+                username: thandi
+                displayName: Thandi Mokoena
+                role: CUSTOMER
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          description: Username or password is wrong. The response never says which.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: about:blank
+                title: Unauthorized
+                status: 401
+                detail: The username or password is incorrect.
+                instance: /api/v1/auth/login
+                code: BAD_CREDENTIALS
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          description: Too many failed attempts for this username in the last 15 minutes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: about:blank
+                title: Too Many Requests
+                status: 429
+                detail: Too many failed sign-in attempts. Try again in a few minutes.
+                instance: /api/v1/auth/login
+                code: TOO_MANY_LOGIN_ATTEMPTS
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: End the current session.
+      description: Idempotent. Returns 204 even when there is no session. The CSRF token is rotated.
+      security:
+        - csrfHeader: []
+      responses:
+        '204':
+          description: Session ended (or there was none).
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/me:
+    get:
+      tags: [auth]
+      operationId: getCurrentUser
+      summary: Return the signed-in user, or 401 when there is no session.
+      responses:
+        '200':
+          description: The signed-in user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+              example:
+                id: 6d0b8a51-3f2c-4e7a-9b14-0c5e2f7a9d31
+                username: thandi
+                displayName: Thandi Mokoena
+                role: CUSTOMER
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /accounts:
+    get:
+      tags: [accounts]
+      operationId: listAccounts
+      summary: List the signed-in customer's accounts (not paged; a customer has a handful).
+      responses:
+        '200':
+          description: The customer's own accounts, ordered by product name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+              example:
+                - id: 2b7e4c19-5a8d-4f3b-8e61-7d9c0a2f4b58
+                  maskedNumber: '**** 4821'
+                  productName: Everyday Cheque Account
+                  currency: ZAR
+                  availableBalance: '18452.37'
+                - id: 9c3f1a72-6e4b-4d8c-a0f5-1b2e3d4c5f60
+                  maskedNumber: '**** 7710'
+                  productName: Credit Card
+                  currency: ZAR
+                  availableBalance: '24100.00'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /accounts/{accountId}/transactions:
+    get:
+      tags: [accounts]
+      operationId: listAccountTransactions
+      summary: Page through one of the customer's accounts' transactions, newest first.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - name: from
+          in: query
+          description: >-
+            First day to include (inclusive), interpreted in the bank's time zone
+            (Africa/Johannesburg). Must not be after `to`.
+          schema:
+            type: string
+            format: date
+          example: '2026-07-28'
+        - name: to
+          in: query
+          description: Last day to include (inclusive), interpreted in Africa/Johannesburg.
+          schema:
+            type: string
+            format: date
+          example: '2026-10-26'
+        - name: q
+          in: query
+          description: Case-insensitive "contains" match on merchant name or transaction reference.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: streambox
+        - name: disputed
+          in: query
+          description: >-
+            `true` returns only transactions that have a non-withdrawn dispute.
+            `false` or absent applies no filter.
+          schema:
+            type: boolean
+          example: true
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: One page of transactions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionPage'
+              example:
+                items:
+                  - id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                    reference: TXN-20261024-000184
+                    postedAt: '2026-10-24T09:14:22Z'
+                    amount: '189.00'
+                    currency: ZAR
+                    direction: DEBIT
+                    status: SETTLED
+                    merchantName: StreamBox Subscription
+                    disputeStatus: UNDER_REVIEW
+                  - id: 7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d
+                    reference: TXN-20261023-000179
+                    postedAt: '2026-10-23T16:41:05Z'
+                    amount: '642.15'
+                    currency: ZAR
+                    direction: DEBIT
+                    status: PENDING
+                    merchantName: Fresh Market Midrand
+                    disputeStatus: null
+                page: 0
+                size: 20
+                totalItems: 83
+                totalPages: 5
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /transactions/{id}:
+    get:
+      tags: [transactions]
+      operationId: getTransaction
+      summary: Get one transaction with an explanation of whether it can be disputed.
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+      responses:
+        '200':
+          description: The transaction, including eligibility and any open dispute.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionDetail'
+              examples:
+                eligible:
+                  summary: Settled debit within the window, not yet disputed
+                  value:
+                    id: 3c2b1a09-8f7e-4d6c-b5a4-938271605f4e
+                    reference: TXN-20261019-000151
+                    postedAt: '2026-10-19T11:02:48Z'
+                    amount: '1250.00'
+                    currency: ZAR
+                    direction: DEBIT
+                    status: SETTLED
+                    merchantName: Metro Fuel N1
+                    disputeStatus: null
+                    merchantCategory: Fuel
+                    channel: CARD
+                    eligibility:
+                      eligible: true
+                      reasonCode: null
+                      message: null
+                    disputeId: null
+                pending:
+                  summary: Pending card purchase
+                  value:
+                    id: 7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d
+                    reference: TXN-20261023-000179
+                    postedAt: '2026-10-23T16:41:05Z'
+                    amount: '642.15'
+                    currency: ZAR
+                    direction: DEBIT
+                    status: PENDING
+                    merchantName: Fresh Market Midrand
+                    disputeStatus: null
+                    merchantCategory: Groceries
+                    channel: CARD
+                    eligibility:
+                      eligible: false
+                      reasonCode: PENDING
+                      message: This transaction is still pending. You can dispute it once it has cleared.
+                    disputeId: null
+                alreadyDisputed:
+                  summary: Already has an open dispute
+                  value:
+                    id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                    reference: TXN-20261024-000184
+                    postedAt: '2026-10-24T09:14:22Z'
+                    amount: '189.00'
+                    currency: ZAR
+                    direction: DEBIT
+                    status: SETTLED
+                    merchantName: StreamBox Subscription
+                    disputeStatus: UNDER_REVIEW
+                    merchantCategory: Digital subscriptions
+                    channel: CARD
+                    eligibility:
+                      eligible: false
+                      reasonCode: ALREADY_DISPUTED
+                      message: This transaction already has an open dispute.
+                    disputeId: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /dispute-reasons:
+    get:
+      tags: [disputes]
+      operationId: listDisputeReasons
+      summary: List dispute reasons grouped by category, for the "raise a dispute" stepper.
+      responses:
+        '200':
+          description: All categories with their reasons, in display order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReasonCategory'
+              example:
+                - category: FRAUD
+                  label: Fraud
+                  reasons:
+                    - code: F01
+                      label: I didn't make this transaction
+                    - code: F02
+                      label: My card was lost or stolen
+                - category: AUTHORISATION
+                  label: Authorisation
+                  reasons:
+                    - code: A01
+                      label: I didn't authorise this debit order
+                - category: PROCESSING_ERROR
+                  label: Processing error
+                  reasons:
+                    - code: P01
+                      label: I was charged twice
+                    - code: P02
+                      label: The amount is wrong
+                - category: CONSUMER
+                  label: Goods or services
+                  reasons:
+                    - code: C01
+                      label: I didn't receive the goods or service
+                    - code: C02
+                      label: I cancelled, but I'm still being charged
+                    - code: C03
+                      label: My refund never arrived
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /disputes:
+    post:
+      tags: [disputes]
+      operationId: createDispute
+      summary: Raise a dispute on one of the customer's transactions.
+      description: |
+        Validation order: request shape (400) → transaction exists and is owned (404) → an open
+        dispute already exists (409) → other eligibility rules (422) → amount not above the
+        transaction amount (400, field `amount`). The dispute's currency is the transaction's.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDisputeRequest'
+            example:
+              transactionId: 3c2b1a09-8f7e-4d6c-b5a4-938271605f4e
+              reasonCode: P02
+              amount: '250.00'
+              description: I was quoted R1000 for fuel at the pump but my card was charged R1250.
+      responses:
+        '201':
+          description: Dispute created in status SUBMITTED.
+          headers:
+            Location:
+              description: URL of the new dispute.
+              schema:
+                type: string
+                format: uri-reference
+              example: /api/v1/disputes/1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputeDetail'
+              example:
+                id: 1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d
+                reference: DSP-2026-000008
+                status: SUBMITTED
+                reasonCode: P02
+                reasonLabel: The amount is wrong
+                disputedAmount: '250.00'
+                currency: ZAR
+                merchantName: Metro Fuel N1
+                createdAt: '2026-10-26T07:45:10Z'
+                updatedAt: '2026-10-26T07:45:10Z'
+                description: I was quoted R1000 for fuel at the pump but my card was charged R1250.
+                transaction:
+                  id: 3c2b1a09-8f7e-4d6c-b5a4-938271605f4e
+                  reference: TXN-20261019-000151
+                  postedAt: '2026-10-19T11:02:48Z'
+                  amount: '1250.00'
+                  currency: ZAR
+                  direction: DEBIT
+                  status: SETTLED
+                  merchantName: Metro Fuel N1
+                  disputeStatus: SUBMITTED
+                timeline:
+                  - id: 8e7d6c5b-4a39-4281-9f0e-1d2c3b4a5968
+                    status: SUBMITTED
+                    previousStatus: null
+                    actor: CUSTOMER
+                    message: null
+                    occurredAt: '2026-10-26T07:45:10Z'
+                canWithdraw: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The transaction already has a dispute that is not withdrawn.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: about:blank
+                title: Conflict
+                status: 409
+                detail: This transaction already has an open dispute (DSP-2026-000003).
+                instance: /api/v1/disputes
+                code: DISPUTE_ALREADY_EXISTS
+        '422':
+          description: The transaction cannot be disputed (pending, a credit, or older than the window).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: about:blank
+                title: Unprocessable Content
+                status: 422
+                detail: This transaction is older than 120 days and can no longer be disputed.
+                instance: /api/v1/disputes
+                code: TRANSACTION_NOT_ELIGIBLE
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [disputes]
+      operationId: listDisputes
+      summary: Page through the customer's dispute history, newest first.
+      parameters:
+        - name: status
+          in: query
+          description: Keep only these statuses. Repeat the parameter for several (`status=SUBMITTED&status=UNDER_REVIEW`).
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 6
+            uniqueItems: true
+            items:
+              $ref: '#/components/schemas/DisputeStatus'
+          example: [SUBMITTED, UNDER_REVIEW, AWAITING_CUSTOMER_INFO]
+        - name: q
+          in: query
+          description: Case-insensitive "contains" match on dispute reference or merchant name.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: DSP-2026-0000
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: One page of disputes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputePage'
+              example:
+                items:
+                  - id: 1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d
+                    reference: DSP-2026-000008
+                    status: SUBMITTED
+                    reasonCode: P02
+                    reasonLabel: The amount is wrong
+                    disputedAmount: '250.00'
+                    currency: ZAR
+                    merchantName: Metro Fuel N1
+                    createdAt: '2026-10-26T07:45:10Z'
+                    updatedAt: '2026-10-26T07:45:10Z'
+                  - id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                    reference: DSP-2026-000003
+                    status: UNDER_REVIEW
+                    reasonCode: P01
+                    reasonLabel: I was charged twice
+                    disputedAmount: '189.00'
+                    currency: ZAR
+                    merchantName: StreamBox Subscription
+                    createdAt: '2026-10-24T12:30:00Z'
+                    updatedAt: '2026-10-25T08:05:41Z'
+                page: 0
+                size: 20
+                totalItems: 7
+                totalPages: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /disputes/{id}:
+    get:
+      tags: [disputes]
+      operationId: getDispute
+      summary: Get one of the customer's disputes with its status timeline.
+      parameters:
+        - $ref: '#/components/parameters/DisputeId'
+      responses:
+        '200':
+          description: The dispute. The timeline is oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputeDetail'
+              example:
+                id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                reference: DSP-2026-000003
+                status: UNDER_REVIEW
+                reasonCode: P01
+                reasonLabel: I was charged twice
+                disputedAmount: '189.00'
+                currency: ZAR
+                merchantName: StreamBox Subscription
+                createdAt: '2026-10-24T12:30:00Z'
+                updatedAt: '2026-10-25T08:05:41Z'
+                description: StreamBox charged my card twice on the same day for one monthly subscription.
+                transaction:
+                  id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                  reference: TXN-20261024-000184
+                  postedAt: '2026-10-24T09:14:22Z'
+                  amount: '189.00'
+                  currency: ZAR
+                  direction: DEBIT
+                  status: SETTLED
+                  merchantName: StreamBox Subscription
+                  disputeStatus: UNDER_REVIEW
+                timeline:
+                  - id: 4b3a2918-0f7e-4d6c-9b5a-48372615a0f9
+                    status: SUBMITTED
+                    previousStatus: null
+                    actor: CUSTOMER
+                    message: null
+                    occurredAt: '2026-10-24T12:30:00Z'
+                  - id: 6d5c4b3a-2918-4f7e-8d6c-5b4a39281706
+                    status: UNDER_REVIEW
+                    previousStatus: SUBMITTED
+                    actor: AGENT
+                    message: We're looking into the duplicate charge with the merchant.
+                    occurredAt: '2026-10-25T08:05:41Z'
+                canWithdraw: true
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /disputes/{id}/withdraw:
+    post:
+      tags: [disputes]
+      operationId: withdrawDispute
+      summary: Withdraw an open dispute (SUBMITTED, UNDER_REVIEW or AWAITING_CUSTOMER_INFO).
+      description: >-
+        Moves the dispute to WITHDRAWN and records a timeline event. Afterwards the transaction can
+        be disputed again. No request body.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: '#/components/parameters/DisputeId'
+      responses:
+        '200':
+          description: The withdrawn dispute.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputeDetail'
+              example:
+                id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                reference: DSP-2026-000003
+                status: WITHDRAWN
+                reasonCode: P01
+                reasonLabel: I was charged twice
+                disputedAmount: '189.00'
+                currency: ZAR
+                merchantName: StreamBox Subscription
+                createdAt: '2026-10-24T12:30:00Z'
+                updatedAt: '2026-10-26T08:12:03Z'
+                description: StreamBox charged my card twice on the same day for one monthly subscription.
+                transaction:
+                  id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                  reference: TXN-20261024-000184
+                  postedAt: '2026-10-24T09:14:22Z'
+                  amount: '189.00'
+                  currency: ZAR
+                  direction: DEBIT
+                  status: SETTLED
+                  merchantName: StreamBox Subscription
+                  disputeStatus: null
+                timeline:
+                  - id: 4b3a2918-0f7e-4d6c-9b5a-48372615a0f9
+                    status: SUBMITTED
+                    previousStatus: null
+                    actor: CUSTOMER
+                    message: null
+                    occurredAt: '2026-10-24T12:30:00Z'
+                  - id: 6d5c4b3a-2918-4f7e-8d6c-5b4a39281706
+                    status: UNDER_REVIEW
+                    previousStatus: SUBMITTED
+                    actor: AGENT
+                    message: We're looking into the duplicate charge with the merchant.
+                    occurredAt: '2026-10-25T08:05:41Z'
+                  - id: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+                    status: WITHDRAWN
+                    previousStatus: UNDER_REVIEW
+                    actor: CUSTOMER
+                    message: null
+                    occurredAt: '2026-10-26T08:12:03Z'
+                canWithdraw: false
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The dispute is already closed (resolved or withdrawn).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+              example:
+                type: about:blank
+                title: Conflict
+                status: 409
+                detail: A dispute in status RESOLVED_DECLINED cannot be withdrawn.
+                instance: /api/v1/disputes/0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f/withdraw
+                code: INVALID_DISPUTE_TRANSITION
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: Server-side session created by `POST /auth/login`. HttpOnly, SameSite=Lax.
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-XSRF-TOKEN
+      description: >-
+        Double-submit CSRF token. Send the current value of the `XSRF-TOKEN` cookie on every
+        POST. Missing or wrong token returns `403 FORBIDDEN`.
+
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      description: Account id. Another customer's account returns 404.
+      schema:
+        type: string
+        format: uuid
+      example: 2b7e4c19-5a8d-4f3b-8e61-7d9c0a2f4b58
+    TransactionId:
+      name: id
+      in: path
+      required: true
+      description: Transaction id. Another customer's transaction returns 404.
+      schema:
+        type: string
+        format: uuid
+      example: 3c2b1a09-8f7e-4d6c-b5a4-938271605f4e
+    DisputeId:
+      name: id
+      in: path
+      required: true
+      description: Dispute id. Another customer's dispute returns 404.
+      schema:
+        type: string
+        format: uuid
+      example: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+    Page:
+      name: page
+      in: query
+      description: Zero-based page index.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+      example: 0
+    Size:
+      name: size
+      in: query
+      description: Page size. Values outside 1..100 return 400 VALIDATION_FAILED.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+
+  responses:
+    ValidationFailed:
+      description: >-
+        The request is malformed or breaks a validation rule (including a path id that is not a
+        UUID). `errors[]` lists each failing field.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Bad Request
+            status: 400
+            detail: One or more fields are invalid.
+            instance: /api/v1/disputes
+            code: VALIDATION_FAILED
+            errors:
+              - field: description
+                message: must be between 20 and 1000 characters
+              - field: amount
+                message: must not be more than the transaction amount (1250.00)
+    Unauthenticated:
+      description: No valid session.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Unauthorized
+            status: 401
+            detail: Sign in to continue.
+            instance: /api/v1/auth/me
+            code: UNAUTHENTICATED
+    Forbidden:
+      description: >-
+        Missing or invalid CSRF token on an unsafe request, or the signed-in role may not call this
+        operation. Never used to hide another customer's resource (that is 404).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Forbidden
+            status: 403
+            detail: You are not allowed to perform this action.
+            instance: /api/v1/disputes
+            code: FORBIDDEN
+    NotFound:
+      description: The resource does not exist or belongs to another customer.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Not Found
+            status: 404
+            detail: The requested resource was not found.
+            instance: /api/v1/transactions/3c2b1a09-8f7e-4d6c-b5a4-938271605f4e
+            code: NOT_FOUND
+    InternalError:
+      description: Unexpected server error. No stack traces, SQL or class names are exposed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: about:blank
+            title: Internal Server Error
+            status: 500
+            detail: Something went wrong on our side. Please try again.
+            instance: /api/v1/disputes
+            code: INTERNAL_ERROR
+
+  schemas:
+    # ---------- shared value types ----------
+    MoneyAmount:
+      type: string
+      description: Non-negative decimal amount with exactly two decimals. Pair with a `currency`.
+      pattern: '^\d{1,15}\.\d{2}$'
+      examples: ['1250.00']
+    SignedMoneyAmount:
+      type: string
+      description: Decimal amount with exactly two decimals; may be negative (an overdrawn balance).
+      pattern: '^-?\d{1,15}\.\d{2}$'
+      examples: ['18452.37']
+    CurrencyCode:
+      type: string
+      description: ISO-4217 alphabetic code. Always ZAR in the demo data.
+      pattern: '^[A-Z]{3}$'
+      examples: [ZAR]
+
+    # ---------- enums ----------
+    Role:
+      type: string
+      description: Only CUSTOMER is active in this version. AGENT is reserved for the back office.
+      enum: [CUSTOMER, AGENT]
+    ActorRole:
+      type: string
+      description: Who caused a timeline event. SYSTEM is reserved for automated transitions.
+      enum: [CUSTOMER, AGENT, SYSTEM]
+    TransactionDirection:
+      type: string
+      enum: [DEBIT, CREDIT]
+    TransactionStatus:
+      type: string
+      enum: [PENDING, SETTLED]
+    Channel:
+      type: string
+      enum: [CARD, DEBIT_ORDER, EFT, ATM]
+    DisputeStatus:
+      type: string
+      description: >-
+        Customer labels: SUBMITTED "Submitted", UNDER_REVIEW "In review", AWAITING_CUSTOMER_INFO
+        "Action needed", RESOLVED_UPHELD "Resolved in your favour", RESOLVED_DECLINED "Declined",
+        WITHDRAWN "Withdrawn".
+      enum:
+        - SUBMITTED
+        - UNDER_REVIEW
+        - AWAITING_CUSTOMER_INFO
+        - RESOLVED_UPHELD
+        - RESOLVED_DECLINED
+        - WITHDRAWN
+    EligibilityReasonCode:
+      type: string
+      description: Why a transaction cannot be disputed. Rules are checked in this order; the first failure wins.
+      enum: [NOT_A_DEBIT, PENDING, TOO_OLD, ALREADY_DISPUTED]
+    ReasonCategoryCode:
+      type: string
+      enum: [FRAUD, AUTHORISATION, PROCESSING_ERROR, CONSUMER]
+    ReasonCode:
+      type: string
+      description: Dispute reason. See `GET /dispute-reasons` for wording and grouping.
+      enum: [F01, F02, A01, P01, P02, C01, C02, C03]
+    ProblemCode:
+      type: string
+      description: >-
+        Stable machine-readable error code. Clients branch on this, not on HTTP text.
+        Framework-level codes can occur on any operation and are not listed per operation:
+        METHOD_NOT_ALLOWED (405), NOT_ACCEPTABLE (406), UNSUPPORTED_MEDIA_TYPE (415) and
+        CLIENT_ERROR (any other 4xx). Malformed JSON and parameter type mismatches are
+        VALIDATION_FAILED (400).
+      enum:
+        - VALIDATION_FAILED
+        - BAD_CREDENTIALS
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - TRANSACTION_NOT_ELIGIBLE
+        - DISPUTE_ALREADY_EXISTS
+        - INVALID_DISPUTE_TRANSITION
+        - TOO_MANY_LOGIN_ATTEMPTS
+        - METHOD_NOT_ALLOWED
+        - NOT_ACCEPTABLE
+        - UNSUPPORTED_MEDIA_TYPE
+        - CLIENT_ERROR
+        - INTERNAL_ERROR
+
+    # ---------- auth ----------
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 50
+          examples: [thandi]
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 72
+          description: At most 72 characters, the input limit of BCrypt.
+          examples: [demo-password]
+    Me:
+      type: object
+      required: [id, username, displayName, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          examples: [thandi]
+        displayName:
+          type: string
+          examples: [Thandi Mokoena]
+        role:
+          $ref: '#/components/schemas/Role'
+
+    # ---------- accounts and transactions ----------
+    Account:
+      type: object
+      required: [id, maskedNumber, productName, currency, availableBalance]
+      properties:
+        id:
+          type: string
+          format: uuid
+        maskedNumber:
+          type: string
+          description: Only the last four digits are shown.
+          examples: ['**** 4821']
+        productName:
+          type: string
+          examples: [Everyday Cheque Account]
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        availableBalance:
+          $ref: '#/components/schemas/SignedMoneyAmount'
+    TransactionSummary:
+      type: object
+      required: [id, reference, postedAt, amount, currency, direction, status, merchantName, disputeStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+          examples: [TXN-20261024-000184]
+        postedAt:
+          type: string
+          format: date-time
+        amount:
+          $ref: '#/components/schemas/MoneyAmount'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        direction:
+          $ref: '#/components/schemas/TransactionDirection'
+        status:
+          $ref: '#/components/schemas/TransactionStatus'
+        merchantName:
+          type: string
+          examples: [StreamBox Subscription]
+        disputeStatus:
+          description: Status of the transaction's non-withdrawn dispute, or null when there is none.
+          oneOf:
+            - $ref: '#/components/schemas/DisputeStatus'
+            - type: 'null'
+    Eligibility:
+      type: object
+      required: [eligible, reasonCode, message]
+      properties:
+        eligible:
+          type: boolean
+        reasonCode:
+          description: Null when eligible.
+          oneOf:
+            - $ref: '#/components/schemas/EligibilityReasonCode'
+            - type: 'null'
+        message:
+          type: [string, 'null']
+          description: Customer-facing explanation. Null when eligible.
+          examples: ['This transaction is still pending. You can dispute it once it has cleared.']
+    TransactionDetail:
+      allOf:
+        - $ref: '#/components/schemas/TransactionSummary'
+        - type: object
+          required: [merchantCategory, channel, eligibility, disputeId]
+          properties:
+            merchantCategory:
+              type: string
+              examples: [Fuel]
+            channel:
+              $ref: '#/components/schemas/Channel'
+            eligibility:
+              $ref: '#/components/schemas/Eligibility'
+            disputeId:
+              type: [string, 'null']
+              format: uuid
+              description: Id of the non-withdrawn dispute on this transaction, or null.
+    TransactionPage:
+      type: object
+      required: [items, page, size, totalItems, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransactionSummary'
+        page:
+          type: integer
+          format: int32
+          minimum: 0
+        size:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        totalItems:
+          type: integer
+          format: int64
+          minimum: 0
+        totalPages:
+          type: integer
+          format: int32
+          minimum: 0
+
+    # ---------- dispute reasons ----------
+    Reason:
+      type: object
+      required: [code, label]
+      properties:
+        code:
+          $ref: '#/components/schemas/ReasonCode'
+        label:
+          type: string
+          examples: [I was charged twice]
+    ReasonCategory:
+      type: object
+      required: [category, label, reasons]
+      properties:
+        category:
+          $ref: '#/components/schemas/ReasonCategoryCode'
+        label:
+          type: string
+          examples: [Processing error]
+        reasons:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Reason'
+
+    # ---------- disputes ----------
+    CreateDisputeRequest:
+      type: object
+      required: [transactionId, reasonCode, amount, description]
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        reasonCode:
+          $ref: '#/components/schemas/ReasonCode'
+        amount:
+          type: string
+          description: >-
+            Amount being disputed, in the transaction's currency. Greater than 0, at most two
+            decimals, and not more than the transaction amount (partial disputes are allowed).
+          pattern: '^\d{1,15}(\.\d{1,2})?$'
+          examples: ['250.00']
+        description:
+          type: string
+          description: What went wrong, in the customer's words. Must not be blank.
+          minLength: 20
+          maxLength: 1000
+          examples: [I was quoted R1000 for fuel at the pump but my card was charged R1250.]
+    DisputeSummary:
+      type: object
+      required: [id, reference, status, reasonCode, reasonLabel, disputedAmount, currency, merchantName, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+          description: Human-friendly reference, `DSP-<year>-<at least 6 digits>`.
+          pattern: '^DSP-\d{4}-\d{6,}$'
+          examples: [DSP-2026-000003]
+        status:
+          $ref: '#/components/schemas/DisputeStatus'
+        reasonCode:
+          $ref: '#/components/schemas/ReasonCode'
+        reasonLabel:
+          type: string
+          examples: [I was charged twice]
+        disputedAmount:
+          $ref: '#/components/schemas/MoneyAmount'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        merchantName:
+          type: string
+          examples: [StreamBox Subscription]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TimelineEvent:
+      type: object
+      required: [id, status, previousStatus, actor, message, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/DisputeStatus'
+        previousStatus:
+          description: Null for the creation event.
+          oneOf:
+            - $ref: '#/components/schemas/DisputeStatus'
+            - type: 'null'
+        actor:
+          $ref: '#/components/schemas/ActorRole'
+        message:
+          type: [string, 'null']
+          description: Customer-visible message for this step, if any.
+          examples: [We're looking into the duplicate charge with the merchant.]
+        occurredAt:
+          type: string
+          format: date-time
+    DisputeDetail:
+      allOf:
+        - $ref: '#/components/schemas/DisputeSummary'
+        - type: object
+          required: [description, transaction, timeline, canWithdraw]
+          properties:
+            description:
+              type: string
+            transaction:
+              $ref: '#/components/schemas/TransactionSummary'
+            timeline:
+              type: array
+              description: Oldest first. Always has at least the creation event.
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/TimelineEvent'
+            canWithdraw:
+              type: boolean
+              description: True when the status is SUBMITTED, UNDER_REVIEW or AWAITING_CUSTOMER_INFO.
+    DisputePage:
+      type: object
+      required: [items, page, size, totalItems, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DisputeSummary'
+        page:
+          type: integer
+          format: int32
+          minimum: 0
+        size:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        totalItems:
+          type: integer
+          format: int64
+          minimum: 0
+        totalPages:
+          type: integer
+          format: int32
+          minimum: 0
+
+    # ---------- errors ----------
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: JSON property name (or query/path parameter name) that failed.
+          examples: [description]
+        message:
+          type: string
+          examples: [must be between 20 and 1000 characters]
+    ProblemDetail:
+      type: object
+      description: RFC 9457 problem details, extended with `code` and, for validation errors, `errors`.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Problem type URI. `about:blank` unless a more specific type is defined.
+          examples: [about:blank]
+        title:
+          type: string
+          examples: [Bad Request]
+        status:
+          type: integer
+          format: int32
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: Human-readable explanation, safe to show to the customer.
+        instance:
+          type: string
+          format: uri-reference
+          description: Request path that produced the problem.
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+        errors:
+          type: array
+          description: Present only when `code` is VALIDATION_FAILED.
+          items:
+            $ref: '#/components/schemas/FieldError'
