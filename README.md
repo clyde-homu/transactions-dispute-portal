@@ -12,6 +12,21 @@ Customers view their bank transactions, dispute them and see a history of their 
 | Dispute them | A four-step form: category, specific reason, amount (the full amount or part of it) with a description, then a review with a declaration. On success you get a reference such as `DSP-2026-000123` and an explanation of what happens next. |
 | Historic view of disputes | A dispute history filterable by status and searchable by reference or merchant, and a detail page with a timeline of every status change. Open disputes can be withdrawn. |
 
+### Screenshots
+
+| Transactions | Transaction detail and eligibility |
+| --- | --- |
+| ![Transactions list with account switcher and filters](docs/screenshots/desktop-transactions.png) | ![Transaction detail explaining that it can be disputed](docs/screenshots/desktop-transaction-detail.png) |
+| **Raising a dispute** | **Dispute history** |
+| ![Step one of the raise-dispute form: choosing a category](docs/screenshots/desktop-raise-dispute.png) | ![Dispute history with status filters](docs/screenshots/desktop-dispute-history.png) |
+
+<p>
+  <img src="docs/screenshots/desktop-dispute-detail.png" alt="Dispute detail with the full status timeline of a resolved dispute" width="560">
+  <img src="docs/screenshots/mobile-transactions.png" alt="Transactions on a phone" width="180">
+  <img src="docs/screenshots/mobile-dispute-detail.png" alt="Dispute detail on a phone" width="180">
+  <img src="docs/screenshots/mobile-dispute-history-dark.png" alt="Dispute history on a phone in dark mode" width="180">
+</p>
+
 Production-grade concerns: input validation on both sides, one error format (RFC 9457 problem details with stable codes), customers can only ever see their own data, an audit trail of every status change, session cookies with CSRF protection and login throttling, Flyway migrations, health probes, structured logs, tests at every level, CI and a hardened container.
 
 ## Stack
