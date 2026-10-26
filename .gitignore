@@ -1,0 +1,28 @@
+# Java / Maven
+target/
+*.class
+*.log
+
+# Node / Quasar
+node_modules/
+dist/
+.quasar/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# IDEs (the shared extension recommendations stay tracked)
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (only the documented template is tracked)
+.env
+.env.*
+!.env.example
