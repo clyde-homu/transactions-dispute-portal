@@ -42,6 +42,12 @@ class AppPropertiesTest {
     }
 
     @Test
+    void rejectsADemoPasswordLongerThanBcryptCanHash() {
+        runner.withPropertyValues("app.demo.password=" + "x".repeat(73))
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void rejectsABlankDemoPassword() {
         runner.withPropertyValues("app.demo.password= ")
                 .run(context -> assertThat(context).hasFailed());

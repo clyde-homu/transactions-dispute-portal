@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
@@ -21,7 +22,8 @@ public record AppProperties(
 
     /** Credentials for the seeded demo customers. */
     public record Demo(
-            @NotBlank @DefaultValue("demo-password") String password) {
+            @NotBlank @Size(max = 72) @DefaultValue("demo-password")
+            String password) {
 
         /** Keeps the password out of logs if the properties object is ever printed. */
         @Override

@@ -3,17 +3,24 @@ package com.clydehomu.disputes;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.clydehomu.disputes.shared.config.AppProperties;
+import jakarta.servlet.http.Cookie;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -24,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 @DisabledIfEnvironmentVariable(named = "DB_URL", matches = ".+")
+@ExtendWith(OutputCaptureExtension.class)
 class StandaloneModeSmokeTest {
 
     @Autowired
@@ -101,6 +109,40 @@ class StandaloneModeSmokeTest {
         Long second = jdbc.queryForObject("select nextval('dispute_reference_seq')", Long.class);
 
         assertThat(second).isEqualTo(first + 1);
+    }
+
+    @Test
+    void startupLogsExactlyOneWarningAndItSaysDataIsNotPersisted(CapturedOutput output) {
+        List<String> warnings = output.getAll()
+                .lines()
+                .filter(line -> line.contains("\"level\":\"WARN\""))
+                .toList();
+
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.getFirst()).contains("data is not persisted");
+    }
+
+    @Test
+    void demoDataIsSeededOnH2() {
+        Integer customers = jdbc.queryForObject(
+                "select count(*) from app_user where username in ('thandi', 'pieter')", Integer.class);
+        Integer accounts = jdbc.queryForObject("select count(*) from account", Integer.class);
+        Integer transactions = jdbc.queryForObject("select count(*) from bank_transaction", Integer.class);
+
+        assertThat(customers).isEqualTo(2);
+        assertThat(accounts).isEqualTo(3);
+        assertThat(transactions).isEqualTo(240);
+    }
+
+    @Test
+    void aSeededCustomerCanSignInInStandaloneMode() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .cookie(new Cookie("XSRF-TOKEN", "token"))
+                        .header("X-XSRF-TOKEN", "token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"thandi\",\"password\":\"demo-password\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.displayName").value("Thandi Mokoena"));
     }
 
     @Test
