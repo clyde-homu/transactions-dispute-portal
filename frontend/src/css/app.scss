@@ -13,7 +13,8 @@ body.body--dark {
   --app-muted: #{$muted-on-dark};
   --app-focus: #{$focus-ring-on-dark};
 
-  .q-btn.bg-primary {
+  .q-btn.bg-primary,
+  .q-chip.bg-primary {
     color: $dark-page !important;
   }
 }
@@ -31,6 +32,8 @@ body.body--dark {
 .page-content {
   max-width: 60rem;
   margin-inline: auto;
+  // Quasar pads pages by 8px on a phone, which sits too close to the screen edge.
+  padding-inline: 1rem;
 }
 
 // Visible focus for keyboard users on every interactive element. Quasar fields already draw their
@@ -58,4 +61,17 @@ body.body--dark {
   &:focus {
     transform: translateY(0);
   }
+}
+
+// Text that only assistive technology should read.
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

@@ -8,7 +8,12 @@ import * as authApi from '@/api/auth';
 import type { Me } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
 import { apiError } from '@/test/api-helpers';
-import { createTestI18n, quasarPlugin } from '@/test/vue-helpers';
+import {
+  createTestI18n,
+  quasarPlugin,
+  ResizeObserverStub,
+  setViewportWidth,
+} from '@/test/vue-helpers';
 
 import MainLayout from './MainLayout.vue';
 
@@ -24,13 +29,6 @@ const thandi: Me = {
 };
 
 let wrapper: VueWrapper;
-
-// Quasar reads the viewport once and then follows resize events (debounced by 16 ms).
-async function setViewportWidth(width: number): Promise<void> {
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-  window.dispatchEvent(new Event('resize'));
-  await new Promise((resolve) => setTimeout(resolve, 40));
-}
 
 async function mountLayout(path: string) {
   const pinia = createPinia();
@@ -62,13 +60,6 @@ async function mountLayout(path: string) {
   );
   await flushPromises();
   return { router, auth };
-}
-
-// jsdom has no ResizeObserver, which QLayout needs to measure its header and footer.
-class ResizeObserverStub {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
 }
 
 describe('MainLayout', () => {

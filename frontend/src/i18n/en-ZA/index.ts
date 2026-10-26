@@ -52,22 +52,117 @@ export default {
     NETWORK_ERROR: 'We could not reach the server. Check your connection and try again.',
     UNKNOWN_ERROR: 'Something unexpected happened. Please try again.',
   },
+  common: {
+    retry: 'Try again',
+  },
   money: {
     debit: 'Debit',
     credit: 'Credit',
   },
+  // Customer-facing wording for each dispute status (from the contract).
+  disputeStatus: {
+    SUBMITTED: 'Submitted',
+    UNDER_REVIEW: 'In review',
+    AWAITING_CUSTOMER_INFO: 'Action needed',
+    RESOLVED_UPHELD: 'Resolved in your favour',
+    RESOLVED_DECLINED: 'Declined',
+    WITHDRAWN: 'Withdrawn',
+  },
+  transactionStatus: {
+    PENDING: 'Pending',
+    SETTLED: 'Settled',
+  },
+  channel: {
+    CARD: 'Card',
+    DEBIT_ORDER: 'Debit order',
+    EFT: 'EFT',
+    ATM: 'ATM',
+  },
+  transactions: {
+    accounts: {
+      label: 'Your accounts',
+      availableBalance: 'Available balance',
+      loading: 'Loading accounts',
+      emptyTitle: 'No accounts to show',
+      emptyDescription:
+        'We could not find any accounts for you. If this looks wrong, please contact the bank.',
+      errorTitle: 'We could not load your accounts',
+    },
+    filters: {
+      label: 'Filter transactions',
+      rangeLabel: 'Date range',
+      range: {
+        '30': 'Last 30 days',
+        '90': 'Last 90 days',
+        '120': 'Last 120 days',
+        all: 'All',
+      },
+      search: 'Search merchant or reference',
+      disputedOnly: 'Disputed only',
+      clear: 'Clear filters',
+    },
+    list: {
+      loading: 'Loading transactions',
+      summary: 'Showing {from}–{to} of {total} transactions',
+      pagination: 'Transaction pages',
+      column: {
+        date: 'Date',
+        merchant: 'Merchant',
+        reference: 'Reference',
+        amount: 'Amount',
+      },
+      errorTitle: 'We could not load your transactions',
+      emptyFilteredTitle: 'No transactions match these filters',
+      emptyFilteredDescription:
+        'Try a longer date range, a different search, or clear the filters.',
+      emptyTitle: 'No transactions on this account yet',
+      emptyDescription: 'New card payments, debit orders and transfers will appear here.',
+    },
+    badge: {
+      disputed: 'Disputed',
+    },
+  },
+  transactionDetail: {
+    back: 'Back to transactions',
+    loading: 'Loading transaction',
+    errorTitle: 'We could not load this transaction',
+    notFoundTitle: 'We could not find that transaction',
+    notFoundDescription:
+      'It may belong to someone else, or the link may be out of date. Go back to your transactions to find it.',
+    summary: 'Transaction summary',
+    fields: {
+      postedAt: 'Date and time',
+      reference: 'Reference',
+      channel: 'Channel',
+      category: 'Category',
+      status: 'Status',
+      type: 'Type',
+    },
+    eligibility: {
+      heading: 'Can I dispute this?',
+      eligibleTitle: 'You can dispute this transaction',
+      eligibleDescription:
+        'If you do not recognise this charge, or something went wrong with it, we will guide you through raising a dispute.',
+      notEligibleTitle: 'This transaction cannot be disputed',
+      disputeButton: 'Dispute this transaction',
+      viewDispute: 'View dispute',
+      existingDisputeTitle: 'This transaction has a dispute',
+      // Used only if the server sends no message of its own for a refusal.
+      reason: {
+        NOT_A_DEBIT: 'Only money that left your account can be disputed.',
+        PENDING: 'This transaction is still pending. You can dispute it once it has cleared.',
+        TOO_OLD: 'This transaction is too old to dispute.',
+        ALREADY_DISPUTED: 'This transaction already has an open dispute.',
+      },
+      noReason: 'This transaction cannot be disputed.',
+    },
+  },
   pages: {
     transactions: {
       title: 'Transactions',
-      emptyTitle: 'Your transactions will appear here',
-      emptyDescription:
-        'Pick an account to see its recent activity. You will be able to filter, search and open a transaction to dispute it.',
     },
     transactionDetail: {
       title: 'Transaction details',
-      emptyTitle: 'Transaction details are on their way',
-      emptyDescription:
-        'This page will show the full details of a transaction and whether you can dispute it.',
     },
     disputeNew: {
       title: 'Raise a dispute',
