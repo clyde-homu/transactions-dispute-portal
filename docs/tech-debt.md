@@ -1,0 +1,12 @@
+# Known trade-offs and follow-ups
+
+Items found in review that were consciously deferred for the first release. Each one has a reason and the fix we would make next.
+
+| Area | Item | Why it is acceptable for now | Next step |
+|---|---|---|---|
+| Auth | The login throttle is in memory and per username. When its 10,000-entry map is full, the oldest entries are evicted first, so spraying many usernames can reset a victim's counter. | Single instance, demo users only. Spraying costs far more requests than the throttle saves an attacker. | Move throttling to a shared store (e.g. Redis) or the edge (API gateway / WAF), with per-IP limits, and evict only unblocked entries. |
+| Auth | The SPA login hint shows the demo password. | It is a documented demo value that reviewers need. If `APP_DEMO_PASSWORD` is overridden, the hint is wrong. | Drop the hint once a real identity provider (OIDC) replaces the demo users. |
+| Auth | Field errors returned by the server on login show the server's English text instead of an i18n key. | Login only has two required fields, which the client validates first, so the server text is rarely seen. | Map server field errors to i18n keys by field and constraint. |
+| Startup | The demo seeder runs on `ApplicationReadyEvent`, just after the server accepts connections. A login in the first second or two can fail. | Readiness is the signal orchestration uses, and the end-to-end tests retry their first login. | Seed before the web server starts accepting traffic, or gate readiness on seeding. |
+| Supply chain | GitHub Actions and Docker base images are pinned by tag, not by commit SHA or digest. | Dependabot tracks all of them weekly. | Pin by SHA and digest and let Dependabot raise the updates. |
+| HTTP | The hashed static assets and the SPA shell are served by the application itself. | One image and one origin keep the run modes simple. | Put a CDN or reverse proxy in front for static caching and TLS termination. |
