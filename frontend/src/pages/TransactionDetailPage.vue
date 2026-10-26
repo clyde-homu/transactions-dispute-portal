@@ -10,6 +10,7 @@ import MoneyAmount from '@/components/MoneyAmount.vue';
 import TransactionBadges from '@/components/TransactionBadges.vue';
 import { useApiErrorMessage } from '@/composables/useApiErrorMessage';
 import { useAsyncData } from '@/composables/useAsyncData';
+import { useEligibilityMessage } from '@/composables/useEligibilityMessage';
 import { usePageTitle } from '@/composables/usePageTitle';
 import { formatDateTime } from '@/utils/datetime';
 
@@ -54,14 +55,7 @@ const eligibilityTitle = computed(() => {
     ? t('transactionDetail.eligibility.existingDisputeTitle')
     : t('transactionDetail.eligibility.notEligibleTitle');
 });
-// The server's wording wins; the local text only covers a refusal that arrived without one.
-const refusalMessage = computed(() => {
-  const current = eligibility.value;
-  if (current?.message) return current.message;
-  return current?.reasonCode
-    ? t(`transactionDetail.eligibility.reason.${current.reasonCode}`)
-    : t('transactionDetail.eligibility.noReason');
-});
+const refusalMessage = useEligibilityMessage(eligibility);
 
 const fields = computed(() => {
   const current = transaction.value;

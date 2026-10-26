@@ -221,6 +221,20 @@ describe('TransactionDetailPage', () => {
       expect(panel.find('[data-testid="dispute-button"]').exists()).toBe(false);
     });
 
+    it('shows the dispute that was raised in the meantime when the page is opened again', async () => {
+      await mountPage();
+      expect(eligibilityPanel().find('[data-testid="view-dispute"]').exists()).toBe(false);
+      wrapper.unmount();
+
+      vi.mocked(getTransaction).mockResolvedValue(ALREADY_DISPUTED);
+      await mountPage(ALREADY_DISPUTED.id);
+
+      expect(getTransaction).toHaveBeenCalledTimes(2);
+      expect(eligibilityPanel().get('[data-testid="view-dispute"]').attributes('href')).toBe(
+        '/disputes/' + ALREADY_DISPUTED.disputeId,
+      );
+    });
+
     it.each([
       ['NOT_A_DEBIT', 'Only money that left your account can be disputed.'],
       ['TOO_OLD', 'This transaction is too old to dispute.'],
