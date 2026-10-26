@@ -1,6 +1,7 @@
 package com.clydehomu.disputes.shared.web;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -45,6 +46,17 @@ class SpaForwardControllerTest {
             strings = {"/v3/api-docs", "/v3/api-docs/swagger-config", "/swagger-ui/index.html", "/swagger-ui.html"})
     void documentationPathsAreNotForwarded(String path) throws Exception {
         mockMvc.perform(get(path)).andExpect(status().isNotFound()).andExpect(forwardedUrl(null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/", "/login", "/transactions", "/disputes/6f1c0d0e-3b52-4d3e-9f0a-7a1c2b3d4e5f"})
+    void headOnClientSideRoutesIsAnsweredLikeGet(String route) throws Exception {
+        mockMvc.perform(head(route)).andExpect(status().isOk()).andExpect(forwardedUrl("/index.html"));
+    }
+
+    @Test
+    void headOnTheApiStillRequiresAuthentication() throws Exception {
+        mockMvc.perform(head("/api/v1/accounts")).andExpect(status().isUnauthorized());
     }
 
     @Test

@@ -9,16 +9,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
-/** Application settings under {@code app.*}; the environment variables that feed them are listed in application.yaml. */
+/**
+ * Application settings under {@code app.*}; the environment variables that feed them are listed in application.yaml.
+ * {@code app.seed.enabled} is deliberately not here: it only switches a bean on, so {@code @ConditionalOnProperty} on
+ * the seeder is its single source of truth.
+ */
 @Validated
 @ConfigurationProperties(prefix = "app")
 public record AppProperties(
-        @Valid @DefaultValue Seed seed,
-        @Valid @DefaultValue Demo demo,
-        @Valid @DefaultValue Dispute dispute) {
-
-    /** Whether the demo data seeder runs at startup. */
-    public record Seed(@DefaultValue("true") boolean enabled) {}
+        @Valid @DefaultValue Demo demo, @Valid @DefaultValue Dispute dispute) {
 
     /** Credentials for the seeded demo customers. */
     public record Demo(

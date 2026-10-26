@@ -2,6 +2,7 @@ package com.clydehomu.disputes.auth.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -18,8 +19,10 @@ import com.clydehomu.disputes.auth.domain.Role;
 import com.clydehomu.disputes.auth.infrastructure.SessionAuthenticator;
 import com.clydehomu.disputes.shared.error.ApiException;
 import com.clydehomu.disputes.shared.error.ErrorCode;
+import com.clydehomu.disputes.shared.error.RateLimitedException;
 import com.clydehomu.disputes.shared.security.SecurityConfig;
 import jakarta.servlet.http.Cookie;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
@@ -148,16 +151,39 @@ class AuthControllerTest {
     @Test
     void loginWhenThrottledIsAProblem429() throws Exception {
         when(authService.login(any(), any()))
-                .thenThrow(new ApiException(
+                .thenThrow(new RateLimitedException(
                         ErrorCode.TOO_MANY_LOGIN_ATTEMPTS,
-                        "Too many failed sign-in attempts. Try again in a few minutes."));
+                        "Too many failed sign-in attempts. Try again in a few minutes.",
+                        Duration.ofSeconds(421)));
 
         mockMvc.perform(withCsrf(post("/api/v1/auth/login"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"thandi\",\"password\":\"demo-password\"}"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(header().string("Retry-After", "421"))
                 .andExpect(jsonPath("$.code").value("TOO_MANY_LOGIN_ATTEMPTS"));
+    }
+
+    @Test
+    void retryAfterIsRoundedUpToWholeSecondsAndNeverZero() throws Exception {
+        when(authService.login(any(), any()))
+                .thenThrow(new RateLimitedException(
+                        ErrorCode.TOO_MANY_LOGIN_ATTEMPTS, "Too many.", Duration.ofMillis(1_200)));
+
+        mockMvc.perform(withCsrf(post("/api/v1/auth/login"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"thandi\",\"password\":\"demo-password\"}"))
+                .andExpect(header().string("Retry-After", "2"));
+
+        doThrow(new RateLimitedException(ErrorCode.TOO_MANY_LOGIN_ATTEMPTS, "Too many.", Duration.ZERO))
+                .when(authService)
+                .login(any(), any());
+
+        mockMvc.perform(withCsrf(post("/api/v1/auth/login"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"thandi\",\"password\":\"demo-password\"}"))
+                .andExpect(header().string("Retry-After", "1"));
     }
 
     @Test

@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
@@ -60,6 +61,9 @@ public class SecurityConfig {
                 // The SPA has no "return to the page you wanted" flow. With the default cache, every anonymous 401
                 // would create an HTTP session just to remember the request.
                 .requestCache(cache -> cache.requestCache(new NullRequestCache()))
+                // Logout is POST /api/v1/auth/logout only; the framework's own /logout would be an undocumented second
+                // path.
+                .logout(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(requests -> requests
                         // Public, but still behind the CSRF filter: login and logout need the token header too.
                         .requestMatchers(HttpMethod.GET, "/api/v1/auth/csrf")
@@ -77,8 +81,12 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers("/actuator/**")
                         .authenticated()
-                        // SPA shell, hashed assets and client-side routes. Nothing else is readable anonymously.
+                        // SPA shell, hashed assets and client-side routes. HEAD is the same read without a body, so
+                        // link checkers and proxies get the answer GET would give. Nothing else is readable
+                        // anonymously.
                         .requestMatchers(HttpMethod.GET, "/**")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/**")
                         .permitAll()
                         .anyRequest()
                         .denyAll())

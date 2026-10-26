@@ -93,10 +93,37 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void malformedPathVariableReturnsValidationFailed() throws Exception {
+    void malformedPathVariableNamesTheParameter() throws Exception {
         mockMvc.perform(get("/probe/typed/not-a-uuid"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors[0].field").value("id"))
+                .andExpect(jsonPath("$.errors[0].message").value("has an invalid value"));
+    }
+
+    @Test
+    void aBodyPropertyOfTheWrongTypeNamesTheProperty() throws Exception {
+        MvcResult result = mockMvc.perform(post("/probe/body-uuid")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\": \"not-a-uuid\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors[0].field").value("id"))
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("UUID", "Jackson");
+    }
+
+    @Test
+    void aRuleCheckedAfterBindingIsReportedLikeBeanValidation() throws Exception {
+        mockMvc.perform(get("/probe/validation-failed"))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Content-Type", PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors.length()").value(1))
+                .andExpect(jsonPath("$.errors[0].field").value("amount"))
+                .andExpect(jsonPath("$.errors[0].message")
+                        .value("must not be more than the transaction amount (1250.00)"));
     }
 
     @Test
@@ -189,6 +216,8 @@ class GlobalExceptionHandlerTest {
 
         record Body(@NotBlank String name, @Min(1) int quantity) {}
 
+        record IdBody(UUID id) {}
+
         @PostMapping("/body")
         void body(@Valid @RequestBody Body body) {}
 
@@ -198,6 +227,14 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/constraint")
         void constraint() {
             throw new ConstraintViolationException(validator.validate(new Body("", 0)));
+        }
+
+        @PostMapping("/body-uuid")
+        void bodyUuid(@RequestBody IdBody body) {}
+
+        @GetMapping("/validation-failed")
+        void validationFailed() {
+            throw new ValidationFailedException("amount", "must not be more than the transaction amount (1250.00)");
         }
 
         @GetMapping("/typed/{id}")

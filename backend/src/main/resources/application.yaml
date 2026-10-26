@@ -25,6 +25,8 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  # Set to "framework" behind a TLS-terminating proxy so the app sees https and marks cookies Secure.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
   shutdown: graceful
   error:
     include-message: never

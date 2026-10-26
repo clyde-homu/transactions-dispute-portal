@@ -4,6 +4,9 @@
 :root {
   --app-muted: #{$muted};
   --app-focus: #{$focus-ring};
+  --app-error: #{$negative};
+  --app-border: rgba(0, 0, 0, 0.3);
+  --app-hover: rgba(0, 0, 0, 0.04);
 }
 
 // Dark mode follows the operating system. Primary is navy, which disappears on a dark surface,
@@ -12,14 +15,29 @@ body.body--dark {
   --q-primary: #{$primary-on-dark};
   --app-muted: #{$muted-on-dark};
   --app-focus: #{$focus-ring-on-dark};
+  --app-error: #{$error-on-dark};
+  --app-border: rgba(255, 255, 255, 0.35);
+  --app-hover: rgba(255, 255, 255, 0.06);
 
-  .q-btn.bg-primary {
+  .q-btn.bg-primary,
+  .q-chip.bg-primary {
     color: $dark-page !important;
+  }
+
+  // Stepper labels use the teal secondary, which is too dim as text on a dark surface.
+  .q-stepper__tab--active .q-stepper__title,
+  .q-stepper__tab--done .q-stepper__title {
+    color: var(--q-primary);
   }
 }
 
 .muted {
   color: var(--app-muted);
+}
+
+// Validation text: used with an icon, so the red is never the only cue.
+.error-text {
+  color: var(--app-error);
 }
 
 // Amounts line up in columns when digits have equal width.
@@ -31,6 +49,8 @@ body.body--dark {
 .page-content {
   max-width: 60rem;
   margin-inline: auto;
+  // Quasar pads pages by 8px on a phone, which sits too close to the screen edge.
+  padding-inline: 1rem;
 }
 
 // Visible focus for keyboard users on every interactive element. Quasar fields already draw their
@@ -58,4 +78,17 @@ body.body--dark {
   &:focus {
     transform: translateY(0);
   }
+}
+
+// Text that only assistive technology should read.
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

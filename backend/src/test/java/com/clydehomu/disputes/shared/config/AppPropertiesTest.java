@@ -16,7 +16,6 @@ class AppPropertiesTest {
         runner.run(context -> {
             AppProperties properties = context.getBean(AppProperties.class);
 
-            assertThat(properties.seed().enabled()).isTrue();
             assertThat(properties.demo().password()).isEqualTo("demo-password");
             assertThat(properties.dispute().windowDays()).isEqualTo(120);
         });
@@ -24,12 +23,10 @@ class AppPropertiesTest {
 
     @Test
     void bindsOverrides() {
-        runner.withPropertyValues(
-                        "app.seed.enabled=false", "app.demo.password=other-secret", "app.dispute.window-days=90")
+        runner.withPropertyValues("app.demo.password=other-secret", "app.dispute.window-days=90")
                 .run(context -> {
                     AppProperties properties = context.getBean(AppProperties.class);
 
-                    assertThat(properties.seed().enabled()).isFalse();
                     assertThat(properties.demo().password()).isEqualTo("other-secret");
                     assertThat(properties.dispute().windowDays()).isEqualTo(90);
                 });

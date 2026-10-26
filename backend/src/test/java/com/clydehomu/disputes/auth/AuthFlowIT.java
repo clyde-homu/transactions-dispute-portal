@@ -162,6 +162,9 @@ class AuthFlowIT extends PostgresIntegrationSupport {
         assertThat(blocked.statusCode()).isEqualTo(429);
         assertThat(blocked.headers().firstValue("Content-Type")).hasValue("application/problem+json");
         assertThat(code(blocked)).isEqualTo("TOO_MANY_LOGIN_ATTEMPTS");
+        long retryAfter =
+                Long.parseLong(blocked.headers().firstValue("Retry-After").orElseThrow());
+        assertThat(retryAfter).isBetween(1L, 900L);
 
         HttpResponse<String> other = browser.postJson("/api/v1/auth/login", credentials(CUSTOMER, PASSWORD));
         assertThat(other.statusCode()).isEqualTo(200);

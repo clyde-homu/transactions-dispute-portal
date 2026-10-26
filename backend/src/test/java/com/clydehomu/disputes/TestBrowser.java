@@ -48,6 +48,17 @@ public final class TestBrowser {
         return send(request.build());
     }
 
+    /** Fetches the CSRF cookie, signs in, and fails the test immediately if the credentials are not accepted. */
+    public TestBrowser signIn(String username, String password) {
+        get("/api/v1/auth/csrf");
+        HttpResponse<String> response = postJson(
+                "/api/v1/auth/login", "{\"username\":\"%s\",\"password\":\"%s\"}".formatted(username, password));
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("Sign-in as " + username + " failed with " + response.statusCode());
+        }
+        return this;
+    }
+
     public HttpResponse<String> getWithRawCookie(String path, String cookieHeader) {
         return send(HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .header("Cookie", cookieHeader)

@@ -38,7 +38,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'transactions/:id/dispute',
         name: 'dispute-new',
-        component: () => import('@/pages/DisputeNewPage.vue'),
+        component: () => import('@/pages/RaiseDisputePage.vue'),
       },
       {
         path: 'disputes',

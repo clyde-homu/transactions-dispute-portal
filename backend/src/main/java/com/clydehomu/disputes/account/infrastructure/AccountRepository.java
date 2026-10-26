@@ -9,4 +9,6 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
 
     /** The ownership filter lives in the query, so another customer's accounts can never be loaded by mistake. */
     List<Account> findByOwnerIdOrderByProductNameAsc(UUID ownerId);
+
+    boolean existsByIdAndOwnerId(UUID id, UUID ownerId);
 }

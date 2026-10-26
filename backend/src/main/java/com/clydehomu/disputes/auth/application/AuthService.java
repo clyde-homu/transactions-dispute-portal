@@ -2,6 +2,7 @@ package com.clydehomu.disputes.auth.application;
 
 import com.clydehomu.disputes.shared.error.ApiException;
 import com.clydehomu.disputes.shared.error.ErrorCode;
+import com.clydehomu.disputes.shared.error.RateLimitedException;
 import java.nio.charset.StandardCharsets;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -33,15 +34,17 @@ public class AuthService {
      * password) or TOO_MANY_LOGIN_ATTEMPTS.
      */
     public Authentication login(String username, String password) {
-        if (attempts.isBlocked(username)) {
-            throw new ApiException(
-                    ErrorCode.TOO_MANY_LOGIN_ATTEMPTS, "Too many failed sign-in attempts. Try again in a few minutes.");
+        // The attempt is counted before the slow password check, so parallel guesses cannot slip past the limit.
+        if (!attempts.tryBegin(username)) {
+            throw new RateLimitedException(
+                    ErrorCode.TOO_MANY_LOGIN_ATTEMPTS,
+                    "Too many failed sign-in attempts. Try again in a few minutes.",
+                    attempts.retryAfter(username));
         }
         Authentication authenticated;
         try {
             authenticated = authenticate(username, password);
         } catch (AuthenticationException failure) {
-            attempts.recordFailure(username);
             throw new ApiException(ErrorCode.BAD_CREDENTIALS, "The username or password is incorrect.");
         }
         attempts.reset(username);

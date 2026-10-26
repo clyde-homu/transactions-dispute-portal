@@ -2,6 +2,7 @@ package com.clydehomu.disputes.shared.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -33,6 +35,15 @@ class SecurityConfigTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("Content-Type", "application/problem+json"))
                 .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    }
+
+    @Test
+    void anonymousHeadOnAnApiPathIsStillAProblemJson401() throws Exception {
+        // HEAD /** is open for the SPA shell; this pins that the /api/** rule is evaluated first and wins.
+        mockMvc.perform(head("/api/v1/accounts"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
     }
 
@@ -76,6 +87,21 @@ class SecurityConfigTest {
                         .header("X-XSRF-TOKEN", "some-other-token"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    @WithMockUser
+    void theFrameworksOwnLogoutPathIsNotAvailableAsASecondWayToSignOut() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(post("/logout")
+                        .session(session)
+                        .cookie(new Cookie("XSRF-TOKEN", "token-from-cookie"))
+                        .header("X-XSRF-TOKEN", "token-from-cookie"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        assertThat(session.isInvalid()).as("the framework logout must not run").isFalse();
     }
 
     @Test
