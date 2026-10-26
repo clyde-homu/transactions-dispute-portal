@@ -15,8 +15,10 @@ import com.clydehomu.disputes.account.infrastructure.AccountRepository;
 import com.clydehomu.disputes.auth.domain.AppUser;
 import com.clydehomu.disputes.auth.domain.Role;
 import com.clydehomu.disputes.auth.infrastructure.AppUserRepository;
+import com.clydehomu.disputes.dispute.infrastructure.DisputeRepository;
 import com.clydehomu.disputes.shared.config.AppProperties;
 import com.clydehomu.disputes.transaction.domain.BankTransaction;
+import com.clydehomu.disputes.transaction.domain.EligibilityPolicy;
 import com.clydehomu.disputes.transaction.infrastructure.BankTransactionRepository;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -39,6 +41,8 @@ class DemoDataSeederTest {
     private final AppUserRepository users = mock(AppUserRepository.class);
     private final AccountRepository accounts = mock(AccountRepository.class);
     private final BankTransactionRepository transactions = mock(BankTransactionRepository.class);
+    private final DisputeRepository disputes = mock(DisputeRepository.class);
+    private final EligibilityPolicy eligibilityPolicy = new EligibilityPolicy(120);
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
     private final AppProperties properties = properties();
     private DemoDataSeeder seeder;
@@ -50,7 +54,14 @@ class DemoDataSeederTest {
         when(accounts.save(any(Account.class))).thenAnswer(call -> withId(call.getArgument(0)));
         when(encoder.encode(any())).thenAnswer(call -> "hash-of-" + call.getArgument(0));
         seeder = new DemoDataSeeder(
-                users, accounts, transactions, encoder, properties, Clock.fixed(NOW, ZoneOffset.UTC));
+                users,
+                accounts,
+                transactions,
+                disputes,
+                eligibilityPolicy,
+                encoder,
+                properties,
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -125,7 +136,16 @@ class DemoDataSeederTest {
         List<List<String>> runs = new ArrayList<>();
         for (int run = 0; run < 2; run++) {
             BankTransactionRepository fresh = mock(BankTransactionRepository.class);
-            new DemoDataSeeder(users, accounts, fresh, encoder, properties, Clock.fixed(NOW, ZoneOffset.UTC)).seed();
+            new DemoDataSeeder(
+                            users,
+                            accounts,
+                            fresh,
+                            disputes,
+                            eligibilityPolicy,
+                            encoder,
+                            properties,
+                            Clock.fixed(NOW, ZoneOffset.UTC))
+                    .seed();
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<BankTransaction>> batches = ArgumentCaptor.forClass(List.class);
             verify(fresh, times(3)).saveAll(batches.capture());
@@ -144,6 +164,8 @@ class DemoDataSeederTest {
                 .withBean(AppUserRepository.class, () -> users)
                 .withBean(AccountRepository.class, () -> accounts)
                 .withBean(BankTransactionRepository.class, () -> transactions)
+                .withBean(DisputeRepository.class, () -> disputes)
+                .withBean(EligibilityPolicy.class, () -> eligibilityPolicy)
                 .withBean(PasswordEncoder.class, () -> encoder)
                 .withBean(AppProperties.class, () -> properties)
                 .withBean(Clock.class, () -> Clock.fixed(NOW, ZoneOffset.UTC))

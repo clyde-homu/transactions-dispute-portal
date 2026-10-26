@@ -54,8 +54,8 @@ public final class TransactionSpecifications {
         };
     }
 
-    /** A customer typing "50%" is looking for those characters, not for a wildcard. */
-    static String escapeLike(String text) {
+    /** A customer typing "50%" is looking for those characters, not for a wildcard. Shared with the dispute search. */
+    public static String escapeLike(String text) {
         return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 }

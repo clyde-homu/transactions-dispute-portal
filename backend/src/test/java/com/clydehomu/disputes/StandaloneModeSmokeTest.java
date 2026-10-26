@@ -8,9 +8,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.clydehomu.disputes.auth.application.AuthenticatedUser;
+import com.clydehomu.disputes.auth.infrastructure.AppUserRepository;
 import com.clydehomu.disputes.shared.config.AppProperties;
+import com.jayway.jsonpath.JsonPath;
 import jakarta.servlet.http.Cookie;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,6 +52,12 @@ class StandaloneModeSmokeTest {
 
     @Autowired
     private AppProperties appProperties;
+
+    @Autowired
+    private AppUserRepository users;
+
+    @Autowired
+    private Clock clock;
 
     @Test
     void usesInMemoryH2WhenNoDatabaseIsConfigured() {
@@ -132,6 +145,87 @@ class StandaloneModeSmokeTest {
         assertThat(customers).isEqualTo(2);
         assertThat(accounts).isEqualTo(3);
         assertThat(transactions).isEqualTo(240);
+    }
+
+    @Test
+    void demoDisputesAreSeededOnH2InEveryStatusWithSequenceReferences() {
+        List<String> statuses = jdbc.queryForList("""
+                select distinct d.status from dispute d join app_user u on u.id = d.customer_id
+                where u.username = 'thandi'
+                """, String.class);
+        List<String> references = jdbc.queryForList("select reference from dispute", String.class);
+
+        assertThat(statuses)
+                .containsExactlyInAnyOrder(
+                        "SUBMITTED",
+                        "UNDER_REVIEW",
+                        "AWAITING_CUSTOMER_INFO",
+                        "RESOLVED_UPHELD",
+                        "RESOLVED_DECLINED",
+                        "WITHDRAWN");
+        assertThat(references).hasSizeGreaterThanOrEqualTo(7).allMatch(r -> r.matches("DSP-\\d{4}-\\d{6}"));
+        assertThat(jdbc.queryForObject("select count(*) from dispute_event", Integer.class))
+                .isGreaterThanOrEqualTo(7);
+    }
+
+    @Test
+    void aCustomerCanRaiseAndWithdrawADisputeInStandaloneMode() throws Exception {
+        AuthenticatedUser thandi =
+                new AuthenticatedUser(users.findByUsername("thandi").orElseThrow());
+        String accountId = JsonPath.<List<String>>read(
+                        mockMvc.perform(get("/api/v1/accounts").with(user(thandi)))
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString(),
+                        "$[?(@.productName == 'Everyday Cheque Account')].id")
+                .getFirst();
+        String transactions = mockMvc.perform(get("/api/v1/accounts/" + accountId + "/transactions?size=100")
+                        .with(user(thandi)))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        Instant newest = clock.instant().minus(Duration.ofDays(8));
+        String transactionId = JsonPath.<List<Map<String, Object>>>read(transactions, "$.items").stream()
+                .filter(t -> "DEBIT".equals(t.get("direction")) && "SETTLED".equals(t.get("status")))
+                .filter(t -> t.get("disputeStatus") == null)
+                .filter(t -> Instant.parse((String) t.get("postedAt")).isBefore(newest))
+                .filter(t -> Instant.parse((String) t.get("postedAt"))
+                        .isAfter(clock.instant().minus(Duration.ofDays(100))))
+                .map(t -> (String) t.get("id"))
+                .findFirst()
+                .orElseThrow();
+
+        String created = mockMvc.perform(post("/api/v1/disputes")
+                        .with(user(thandi))
+                        .cookie(new Cookie("XSRF-TOKEN", "token"))
+                        .header("X-XSRF-TOKEN", "token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"transactionId":"%s","reasonCode":"C01","amount":"10.00",
+                                 "description":"The goods were never delivered and the merchant is not replying."}
+                                """.formatted(transactionId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUBMITTED"))
+                .andExpect(jsonPath("$.timeline.length()").value(1))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String id = JsonPath.read(created, "$.id");
+        assertThat(JsonPath.<String>read(created, "$.reference")).matches("DSP-\\d{4}-\\d{6}");
+
+        mockMvc.perform(get("/api/v1/disputes/" + id).with(user(thandi)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transaction.disputeStatus").value("SUBMITTED"));
+        mockMvc.perform(post("/api/v1/disputes/" + id + "/withdraw")
+                        .with(user(thandi))
+                        .cookie(new Cookie("XSRF-TOKEN", "token"))
+                        .header("X-XSRF-TOKEN", "token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WITHDRAWN"))
+                .andExpect(jsonPath("$.timeline.length()").value(2));
+        mockMvc.perform(get("/api/v1/disputes?status=WITHDRAWN&size=100").with(user(thandi)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.id == '%s')]".formatted(id)).isNotEmpty());
     }
 
     @Test
