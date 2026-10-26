@@ -155,7 +155,7 @@ npm run build
 
 ### End to end
 
-The Playwright tests drive a running stack, so start it first. They are run locally and are not part of CI.
+The Playwright tests drive a running stack, so start it first. CI runs the `@smoke` subset against the compose stack on every push.
 
 ```bash
 docker compose up -d --build
@@ -165,7 +165,7 @@ npm run test:e2e          # all journeys
 npm run test:e2e:smoke    # the @smoke subset
 ```
 
-The suite runs on a desktop and a phone-sized browser. It signs in, raises a partial dispute on a real transaction, finds it in the history, withdraws it, and checks that another customer gets "not found" for it. It leaves the data in a state where it can run again. Set `E2E_BASE_URL` to test a stack on another address.
+The suite runs on a desktop and a phone-sized browser. The customer journey signs in, raises a partial dispute on a real transaction, finds it in the history, withdraws it, and checks that another customer gets "not found" for it. The agent journey (desktop only) follows a dispute through both roles: the customer raises it, the agent claims it and asks a question, the customer replies, and the agent upholds it. It then checks that the internal note and the agent's name never reach the customer's page or API response. The suite can be run repeatedly against the same stack. Set `E2E_BASE_URL` to test a stack on another address.
 
 ## CI
 
@@ -175,7 +175,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request.
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `backend`  | Temurin 25 with the Maven cache, then `./mvnw -B verify` (tests, coverage gate, format check). Uploads the JaCoCo report as an artifact.                       |
 | `frontend` | Node 24 with the npm cache, then `npm ci`, lint, type-check, unit tests with coverage, and the production build. Uploads the coverage report.                  |
-| `image`    | Builds the image, checks it runs as uid 10001, runs it standalone and waits for `/actuator/health` to be UP, then runs `docker compose up -d --build` and waits again. Logs are printed on failure and the stack is always torn down. |
+| `image`    | Builds the image, checks it runs as uid 10001, runs it standalone and waits for `/actuator/health` to be UP, then runs `docker compose up -d --build` and waits again. Both modes also sign in as a demo customer. Against the compose stack it then runs the Playwright `@smoke` journeys in Chromium. Logs and the Playwright report are kept on failure, and the stack is always torn down. |
 
 The `image` job fails if a health check is not UP after 120 seconds. The two small scripts it uses live in `.github/scripts/` and can be run against a local instance:
 
@@ -269,4 +269,4 @@ Known trade-offs are listed in [`docs/tech-debt.md`](docs/tech-debt.md).
 3. **SLA tracking:** a due date per reason code, an overdue flag and sorting on the queue, and a simulated credit to the account when a dispute is upheld.
 4. **Back office depth:** reassignment and supervisor views, four-eyes approval for large refunds, and notifications to the customer when their dispute changes.
 5. **Identity:** OIDC (for example Keycloak) instead of demo users, with step-up authentication for sensitive actions.
-6. **Operations:** metrics and tracing (Micrometer with OpenTelemetry), distributed rate limiting at the edge, and end-to-end tests in CI.
+6. **Operations:** metrics and tracing (Micrometer with OpenTelemetry), distributed rate limiting at the edge, and the full end-to-end suite (not just the smoke subset) on a nightly schedule.
