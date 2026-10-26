@@ -646,9 +646,14 @@ describe('AgentDisputePage', () => {
       await click('action-resolve');
       await fill('UPHELD', 'Some text', 'A note');
       await get('resolve-cancel').trigger('click');
-      await settle();
+      // Reopening while the closing transition is still running is ignored, so wait until the
+      // dialog has really gone; on a busy runner that takes more than a few microtasks.
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-testid="resolve-customer-message"]').exists()).toBe(false),
+      );
 
       await click('action-resolve');
+      await vi.waitFor(() => get('resolve-customer-message'));
 
       expect(get('resolve-customer-message').element).toHaveProperty('value', '');
       expect(get('resolve-internal-note').element).toHaveProperty('value', '');
