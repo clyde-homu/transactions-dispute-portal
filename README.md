@@ -1,6 +1,6 @@
 # Transactions Dispute Portal
 
-[![CI](https://github.com/clydehomu/transactions-dispute-portal/actions/workflows/ci.yml/badge.svg)](https://github.com/clydehomu/transactions-dispute-portal/actions/workflows/ci.yml)
+[![CI](https://github.com/clyde-homu/transactions-dispute-portal/actions/workflows/ci.yml/badge.svg)](https://github.com/clyde-homu/transactions-dispute-portal/actions/workflows/ci.yml)
 
 Customers view their bank transactions, dispute them and see a history of their disputes, with a status timeline for each one.
 
