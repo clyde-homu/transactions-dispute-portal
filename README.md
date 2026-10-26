@@ -28,6 +28,12 @@ Customers view their bank transactions, dispute them and see a history of their 
   <img src="docs/screenshots/mobile-dispute-history-dark.png" alt="Dispute history on a phone in dark mode" width="180">
 </p>
 
+| Back office: the agent's queue | Back office: resolving a dispute |
+| --- | --- |
+| ![Agent queue on the Mine tab with status, customer and assignee](docs/screenshots/desktop-agent-queue.png) | ![Resolve dialog with outcome, message to the customer and internal note](docs/screenshots/desktop-agent-resolve.png) |
+| **Back office: full history with internal note** | **Customer: replying to an information request** |
+| ![Agent view of a resolved dispute with actor names and an internal note](docs/screenshots/desktop-agent-dispute.png) | ![Customer dispute page with the Action needed banner and the reply form](docs/screenshots/desktop-customer-reply.png) |
+
 Production-grade concerns: input validation on both sides, one error format (RFC 9457 problem details with stable codes), customers can only ever see their own data, an audit trail of every status change, session cookies with CSRF protection and login throttling, Flyway migrations, health probes, structured logs, tests at every level, CI and a hardened container.
 
 ## Stack
