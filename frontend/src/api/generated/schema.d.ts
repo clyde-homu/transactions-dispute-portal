@@ -685,6 +685,8 @@ export interface operations {
             /** @description Too many failed attempts for this username in the last 15 minutes. */
             429: {
                 headers: {
+                    /** @description Seconds until sign-in attempts for this username are accepted again. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

@@ -122,6 +122,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           description: Too many failed attempts for this username in the last 15 minutes.
+          headers:
+            Retry-After:
+              description: Seconds until sign-in attempts for this username are accepted again.
+              schema:
+                type: integer
+                minimum: 1
           content:
             application/problem+json:
               schema:
@@ -790,6 +796,7 @@ components:
         type: integer
         format: int32
         minimum: 0
+        maximum: 100000
         default: 0
       example: 0
     Size:
