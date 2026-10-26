@@ -9,12 +9,13 @@
   "scripts": {
     "dev": "quasar dev",
     "build": "quasar build",
-    "lint": "prettier --check \"**/*.{js,ts,vue,css,scss,html,md,json}\" && eslint -c ./eslint.config.js \"./src*/**/*.{ts,js,cjs,mjs,vue}\"",
-    "lint:fix": "prettier --write \"**/*.{js,ts,vue,css,scss,html,md,json}\" && eslint --fix -c ./eslint.config.js \"./src*/**/*.{ts,js,cjs,mjs,vue}\"",
+    "lint": "prettier --check \"**/*.{js,ts,vue,css,scss,html,md,json}\" && eslint -c ./eslint.config.js \"./src*/**/*.{ts,js,cjs,mjs,vue}\" \"./tests/**/*.ts\" playwright.config.ts",
+    "lint:fix": "prettier --write \"**/*.{js,ts,vue,css,scss,html,md,json}\" && eslint --fix -c ./eslint.config.js \"./src*/**/*.{ts,js,cjs,mjs,vue}\" \"./tests/**/*.ts\" playwright.config.ts",
     "type-check": "vue-tsc --noEmit",
     "test:unit": "vitest run",
     "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke",
     "gen:api": "openapi-typescript ../docs/openapi.yaml -o src/api/generated/schema.d.ts",
     "postinstall": "quasar prepare --silent"
   },
