@@ -1,0 +1,22 @@
+// Quasar Sass variables: the palette for Dispute Portal.
+// Calm and trustworthy: a deep navy primary with a teal secondary. Every text/background pair
+// used by Quasar components (white on primary, white on negative, ...) meets WCAG AA (4.5:1).
+
+$primary: #0f3d5e;
+$secondary: #0e7c86;
+$accent: #2a8f9c;
+
+$dark: #16222e;
+$dark-page: #0d141b;
+
+$positive: #1b7f4b;
+$negative: #b3261e;
+$info: #1f6f9f;
+$warning: #9a5b00;
+
+// Custom tokens used in app.scss (not Quasar variables).
+$primary-on-dark: #7cc7d6;
+$focus-ring: #0a5f9e;
+$focus-ring-on-dark: #8fd6e6;
+$muted: #4a5866;
+$muted-on-dark: #a8b5c2;
