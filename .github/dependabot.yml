@@ -1,0 +1,57 @@
+version: 2
+
+updates:
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(api)"
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(ui)"
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Base images are pinned to the stack versions (Java 25, Node 24), so only minor and patch tags are proposed.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(docker)"
+    ignore:
+      - dependency-name: "eclipse-temurin"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+
+  # The Dockerfile is covered above; this entry covers the PostgreSQL image in compose.yaml.
+  # A new PostgreSQL major version needs a data migration, so it is never proposed automatically.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(docker)"
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
