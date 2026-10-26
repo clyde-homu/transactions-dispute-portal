@@ -147,7 +147,6 @@ class StandaloneModeSmokeTest {
 
     @Test
     void appSettingsFallBackToTheDocumentedDefaults() {
-        assertThat(appProperties.seed().enabled()).isTrue();
         assertThat(appProperties.demo().password()).isEqualTo("demo-password");
         assertThat(appProperties.dispute().windowDays()).isEqualTo(120);
     }

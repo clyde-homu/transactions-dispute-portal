@@ -40,7 +40,7 @@ class DemoDataSeederTest {
     private final AccountRepository accounts = mock(AccountRepository.class);
     private final BankTransactionRepository transactions = mock(BankTransactionRepository.class);
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
-    private final AppProperties properties = properties(true);
+    private final AppProperties properties = properties();
     private DemoDataSeeder seeder;
 
     @BeforeEach
@@ -156,11 +156,8 @@ class DemoDataSeederTest {
                 .run(context -> assertThat(context).doesNotHaveBean(DemoDataSeeder.class));
     }
 
-    private static AppProperties properties(boolean enabled) {
-        return new AppProperties(
-                new AppProperties.Seed(enabled),
-                new AppProperties.Demo("demo-password"),
-                new AppProperties.Dispute(120));
+    private static AppProperties properties() {
+        return new AppProperties(new AppProperties.Demo("demo-password"), new AppProperties.Dispute(120));
     }
 
     private static <T> T withId(T entity) {

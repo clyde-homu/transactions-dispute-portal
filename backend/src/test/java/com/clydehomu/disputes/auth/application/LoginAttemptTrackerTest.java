@@ -4,6 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -19,117 +26,160 @@ class LoginAttemptTrackerTest {
     }
 
     @Test
-    void anUnknownUsernameIsNotBlocked() {
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+    void theFirstFiveAttemptsAreAllowedAndTheSixthIsRefused() {
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            assertThat(tracker.tryBegin("thandi")).as("attempt %d", attempt).isTrue();
+        }
+
+        assertThat(tracker.tryBegin("thandi")).isFalse();
     }
 
     @Test
-    void fourFailuresDoNotBlock() {
-        failTimes("thandi", 4);
+    void refusalIsPerUsername() {
+        beginTimes("thandi", 5);
 
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+        assertThat(tracker.tryBegin("thandi")).isFalse();
+        assertThat(tracker.tryBegin("pieter")).isTrue();
     }
 
     @Test
-    void theFifthFailureBlocks() {
-        failTimes("thandi", 5);
-
-        assertThat(tracker.isBlocked("thandi")).isTrue();
-    }
-
-    @Test
-    void blockingIsPerUsername() {
-        failTimes("thandi", 5);
-
-        assertThat(tracker.isBlocked("pieter")).isFalse();
-    }
-
-    @Test
-    void blockLastsUntilTheWindowEndsAndThenLifts() {
-        failTimes("thandi", 5);
+    void refusalLastsUntilTheWindowEndsAndThenLifts() {
+        beginTimes("thandi", 5);
 
         clock.advance(Duration.ofMinutes(14).plusSeconds(59));
-        assertThat(tracker.isBlocked("thandi")).isTrue();
+        assertThat(tracker.tryBegin("thandi")).isFalse();
 
         clock.advance(Duration.ofSeconds(1));
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+        assertThat(tracker.tryBegin("thandi")).isTrue();
     }
 
     @Test
-    void theWindowStartsAtTheFirstFailureNotTheLast() {
-        tracker.recordFailure("thandi");
+    void theWindowStartsAtTheFirstAttemptNotTheLast() {
+        tracker.tryBegin("thandi");
         clock.advance(Duration.ofMinutes(10));
-        failTimes("thandi", 4);
+        beginTimes("thandi", 4);
+        assertThat(tracker.tryBegin("thandi")).isFalse();
 
-        assertThat(tracker.isBlocked("thandi")).isTrue();
         clock.advance(Duration.ofMinutes(5));
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+
+        assertThat(tracker.tryBegin("thandi")).isTrue();
     }
 
     @Test
-    void failuresSpreadOverMoreThanOneWindowDoNotAccumulate() {
-        failTimes("thandi", 4);
+    void attemptsSpreadOverMoreThanOneWindowDoNotAccumulate() {
+        beginTimes("thandi", 4);
         clock.advance(Duration.ofMinutes(15));
 
-        tracker.recordFailure("thandi");
+        beginTimes("thandi", 4);
 
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+        assertThat(tracker.tryBegin("thandi")).isTrue();
     }
 
     @Test
-    void aSuccessfulLoginClearsTheCount() {
-        failTimes("thandi", 4);
+    void aSuccessfulSignInClearsTheCount() {
+        beginTimes("thandi", 4);
         tracker.reset("thandi");
-        failTimes("thandi", 4);
 
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+        beginTimes("thandi", 4);
+
+        assertThat(tracker.tryBegin("thandi")).isTrue();
     }
 
     @Test
-    void attemptsWhileBlockedDoNotExtendTheBlock() {
-        failTimes("thandi", 5);
+    void refusedAttemptsDoNotExtendTheWindow() {
+        beginTimes("thandi", 5);
         clock.advance(Duration.ofMinutes(10));
-        failTimes("thandi", 3);
+        for (int i = 0; i < 3; i++) {
+            assertThat(tracker.tryBegin("thandi")).isFalse();
+        }
 
         clock.advance(Duration.ofMinutes(5));
 
-        assertThat(tracker.isBlocked("thandi")).isFalse();
+        assertThat(tracker.tryBegin("thandi")).isTrue();
+    }
+
+    @Test
+    void retryAfterIsTheTimeLeftInTheWindow() {
+        beginTimes("thandi", 5);
+        clock.advance(Duration.ofMinutes(4));
+
+        assertThat(tracker.retryAfter("thandi")).isEqualTo(Duration.ofMinutes(11));
+
+        clock.advance(Duration.ofMinutes(11));
+        assertThat(tracker.retryAfter("thandi")).isEqualTo(Duration.ZERO);
+    }
+
+    @Test
+    void retryAfterIsZeroForAnUnknownUsername() {
+        assertThat(tracker.retryAfter("nobody")).isEqualTo(Duration.ZERO);
+    }
+
+    @Test
+    void parallelAttemptsForOneUsernameNeverExceedTheLimit() throws Exception {
+        int parallel = 20;
+        ExecutorService pool = Executors.newFixedThreadPool(parallel);
+        CountDownLatch ready = new CountDownLatch(parallel);
+        CountDownLatch go = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> results = new ArrayList<>();
+            for (int i = 0; i < parallel; i++) {
+                Callable<Boolean> attempt = () -> {
+                    ready.countDown();
+                    go.await();
+                    return tracker.tryBegin("thandi");
+                };
+                results.add(pool.submit(attempt));
+            }
+            ready.await();
+            go.countDown();
+
+            long allowed = 0;
+            for (Future<Boolean> result : results) {
+                if (result.get()) {
+                    allowed++;
+                }
+            }
+
+            assertThat(allowed).isEqualTo(5);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test
     void theMapNeverGrowsPastItsLimitAndDropsTheOldestFirst() {
         LoginAttemptTracker small = new LoginAttemptTracker(clock, 5, Duration.ofMinutes(15), 3);
         for (int i = 0; i < 5; i++) {
-            small.recordFailure("first");
+            small.tryBegin("first");
         }
-        small.recordFailure("second");
-        small.recordFailure("third");
+        small.tryBegin("second");
+        small.tryBegin("third");
 
-        small.recordFailure("fourth");
+        small.tryBegin("fourth");
 
         assertThat(small.trackedUsernames()).isEqualTo(3);
-        assertThat(small.isBlocked("first")).isFalse();
+        assertThat(small.tryBegin("first")).as("evicted, so it starts over").isTrue();
     }
 
     @Test
     void expiredEntriesAreDroppedBeforeLiveOnesWhenTheMapIsFull() {
         LoginAttemptTracker small = new LoginAttemptTracker(clock, 5, Duration.ofMinutes(15), 3);
-        small.recordFailure("stale");
+        small.tryBegin("stale");
         clock.advance(Duration.ofMinutes(16));
         for (int i = 0; i < 5; i++) {
-            small.recordFailure("live-one");
+            small.tryBegin("live-one");
         }
-        small.recordFailure("live-two");
+        small.tryBegin("live-two");
 
-        small.recordFailure("live-three");
+        small.tryBegin("live-three");
 
         assertThat(small.trackedUsernames()).isEqualTo(3);
-        assertThat(small.isBlocked("live-one")).isTrue();
+        assertThat(small.tryBegin("live-one")).as("still limited").isFalse();
     }
 
-    private void failTimes(String username, int times) {
+    private void beginTimes(String username, int times) {
         for (int i = 0; i < times; i++) {
-            tracker.recordFailure(username);
+            tracker.tryBegin(username);
         }
     }
 }
