@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
 import { isApiError, toApiError } from '@/api/errors';
+import { homeLocationFor } from '@/router/home';
 import { sanitiseRedirect } from '@/router/redirect';
 import { loginSchema } from '@/schemas/login';
 import { useAuthStore } from '@/stores/auth';
@@ -90,7 +91,11 @@ export function useLoginForm() {
       loading.value = false;
     }
 
-    await router.replace(sanitiseRedirect(route.query.redirect) ?? { name: 'transactions' });
+    // A redirect into the other role's area is turned back to this role's home by the route guard.
+    const user = auth.user;
+    await router.replace(
+      sanitiseRedirect(route.query.redirect) ?? (user ? homeLocationFor(user.role) : '/'),
+    );
   }
 
   return { form, fieldErrors, formError, loading, submit };

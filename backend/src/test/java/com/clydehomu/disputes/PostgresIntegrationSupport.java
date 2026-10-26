@@ -1,5 +1,6 @@
 package com.clydehomu.disputes;
 
+import java.time.Duration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -13,8 +14,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class PostgresIntegrationSupport {
 
+    // The default 60 seconds is too short for a laptop that is also running a browser and a container stack: initdb
+    // alone
+    // can take longer than that.
     @ServiceConnection
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
+    static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer("postgres:18-alpine").withStartupTimeout(Duration.ofMinutes(5));
 
     static {
         POSTGRES.start();

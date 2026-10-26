@@ -29,3 +29,15 @@ export type ReasonCategory = Schemas['ReasonCategory'];
 export type ReasonCategoryCode = Schemas['ReasonCategoryCode'];
 export type ReasonCode = Schemas['ReasonCode'];
 export type CreateDisputeRequest = Schemas['CreateDisputeRequest'];
+export type CustomerResponseRequest = Schemas['CustomerResponseRequest'];
+
+// Agent back office (ADR 0006).
+export type AgentQueue = Schemas['AgentQueue'];
+export type AgentAction = Schemas['AgentAction'];
+export type ResolutionOutcome = Schemas['ResolutionOutcome'];
+export type RequestInfoRequest = Schemas['RequestInfoRequest'];
+export type ResolveDisputeRequest = Schemas['ResolveDisputeRequest'];
+export type AgentDisputeSummary = Schemas['AgentDisputeSummary'];
+export type AgentDisputeDetail = Schemas['AgentDisputeDetail'];
+export type AgentDisputePage = Schemas['AgentDisputePage'];
+export type AgentTimelineEvent = Schemas['AgentTimelineEvent'];

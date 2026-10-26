@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth';
 import { apiError } from '@/test/api-helpers';
 
 import { createAuthGuard } from './guards';
+import routes from './routes';
 
 vi.mock('@/api/auth');
 
@@ -22,13 +23,39 @@ const customer: Me = {
   role: 'CUSTOMER',
 };
 
+const lerato: Me = {
+  id: '2c1d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f',
+  username: 'lerato',
+  displayName: 'Lerato Dlamini',
+  role: 'AGENT',
+};
+
 function buildRouter() {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: Stub, meta: { public: true } },
-      { path: '/transactions', name: 'transactions', component: Stub },
-      { path: '/disputes/:id', name: 'dispute-detail', component: Stub },
+      { path: '/', name: 'home', component: Stub },
+      {
+        path: '/transactions',
+        name: 'transactions',
+        component: Stub,
+        meta: { roles: ['CUSTOMER'] },
+      },
+      {
+        path: '/disputes/:id',
+        name: 'dispute-detail',
+        component: Stub,
+        meta: { roles: ['CUSTOMER'] },
+      },
+      { path: '/agent', name: 'agent-queue', component: Stub, meta: { roles: ['AGENT'] } },
+      {
+        path: '/agent/disputes/:id',
+        name: 'agent-dispute-detail',
+        component: Stub,
+        meta: { roles: ['AGENT'] },
+      },
+      { path: '/anywhere', name: 'anywhere', component: Stub },
     ],
   });
   router.beforeEach(createAuthGuard(useAuthStore()));
@@ -95,5 +122,120 @@ describe('auth route guard', () => {
     await router.push('/disputes/abc');
 
     expect(authApi.getCurrentUser).toHaveBeenCalledTimes(1);
+  });
+
+  describe('roles', () => {
+    it('sends a signed-in agent away from the login page to the queue', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(lerato);
+      const router = buildRouter();
+
+      await router.push('/login');
+
+      expect(router.currentRoute.value.name).toBe('agent-queue');
+    });
+
+    it.each([
+      ['a customer', customer, 'transactions'],
+      ['an agent', lerato, 'agent-queue'],
+    ])('sends %s who opens "/" to their own home', async (_who, user, home) => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(user);
+      const router = buildRouter();
+
+      await router.push('/');
+
+      expect(router.currentRoute.value.name).toBe(home);
+    });
+
+    it('keeps a customer out of the agent pages and sends them to their transactions', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(customer);
+      const router = buildRouter();
+
+      await router.push('/agent');
+      expect(router.currentRoute.value.name).toBe('transactions');
+
+      await router.push('/agent/disputes/abc');
+      expect(router.currentRoute.value.name).toBe('transactions');
+    });
+
+    it('keeps an agent out of the customer pages and sends them to the queue', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(lerato);
+      const router = buildRouter();
+
+      await router.push('/transactions');
+      expect(router.currentRoute.value.name).toBe('agent-queue');
+
+      await router.push('/disputes/abc');
+      expect(router.currentRoute.value.name).toBe('agent-queue');
+    });
+
+    it('lets each role open its own pages', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(lerato);
+      const router = buildRouter();
+
+      await router.push('/agent/disputes/abc');
+
+      expect(router.currentRoute.value.name).toBe('agent-dispute-detail');
+    });
+
+    it('lets either role open a page with no role restriction', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(lerato);
+      const router = buildRouter();
+
+      await router.push('/anywhere');
+
+      expect(router.currentRoute.value.name).toBe('anywhere');
+    });
+
+    it('sends a signed-out visitor to the login page with the agent address to return to', async () => {
+      vi.mocked(authApi.getCurrentUser).mockRejectedValue(apiError(401, 'UNAUTHENTICATED'));
+      const router = buildRouter();
+
+      await router.push('/agent/disputes/abc');
+
+      expect(router.currentRoute.value.name).toBe('login');
+      expect(router.currentRoute.value.query.redirect).toBe('/agent/disputes/abc');
+    });
+
+    it('honours a safe redirect inside the area of the signed-in role', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(lerato);
+      const router = buildRouter();
+
+      await router.push('/login?redirect=/agent/disputes/abc');
+
+      expect(router.currentRoute.value.fullPath).toBe('/agent/disputes/abc');
+    });
+
+    it('turns a redirect into the other role area back to the own home of the user', async () => {
+      vi.mocked(authApi.getCurrentUser).mockResolvedValue(lerato);
+      const router = buildRouter();
+
+      await router.push('/login?redirect=/transactions');
+
+      expect(router.currentRoute.value.name).toBe('agent-queue');
+    });
+  });
+
+  describe('the route table', () => {
+    const children = routes.find((route) => route.path === '/')?.children ?? [];
+    const rolesOf = (name: string) => children.find((route) => route.name === name)?.meta?.roles;
+
+    it.each(['transactions', 'transaction-detail', 'dispute-new', 'disputes', 'dispute-detail'])(
+      'restricts the customer route %s to customers',
+      (name) => {
+        expect(rolesOf(name)).toEqual(['CUSTOMER']);
+      },
+    );
+
+    it.each(['agent-queue', 'agent-dispute-detail'])(
+      'restricts the agent route %s to agents',
+      (name) => {
+        expect(rolesOf(name)).toEqual(['AGENT']);
+      },
+    );
+
+    it('leaves "/" and the 404 page open to either role', () => {
+      expect(rolesOf('home')).toBeUndefined();
+      expect(rolesOf('not-found')).toBeUndefined();
+    });
   });
 });

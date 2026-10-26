@@ -6,6 +6,8 @@ import { useRoute } from 'vue-router';
 
 import { getDispute, withdrawDispute } from '@/api/disputes';
 import { isApiError } from '@/api/errors';
+import type { DisputeDetail } from '@/api/types';
+import DisputeReplyForm from '@/components/DisputeReplyForm.vue';
 import DisputeTimeline from '@/components/DisputeTimeline.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ErrorState from '@/components/ErrorState.vue';
@@ -49,6 +51,26 @@ const isFullAmount = computed(() => {
     parseCents(current.disputedAmount) === parseCents(current.transaction.amount)
   );
 });
+
+// ---- reply to the disputes team -----------------------------------------------------------------
+
+const replyForm = ref<InstanceType<typeof DisputeReplyForm> | null>(null);
+
+// The most recent thing the team asked, so the customer reads it beside the reply box.
+const question = computed(() => {
+  const events = dispute.value?.timeline ?? [];
+  const asked = events.findLast(
+    (event) => event.status === 'AWAITING_CUSTOMER_INFO' && event.message,
+  );
+  return asked?.message ?? null;
+});
+
+async function onReplied(updated: DisputeDetail): Promise<void> {
+  dispute.value = updated;
+  // The form is gone now that the dispute is back in review, so give focus a new home.
+  await nextTick();
+  document.getElementById('dispute-heading')?.focus();
+}
 
 // ---- withdraw ----------------------------------------------------------------------------------
 
@@ -134,6 +156,30 @@ async function withdraw(): Promise<void> {
     />
 
     <template v-else-if="dispute">
+      <q-banner
+        v-if="dispute.canRespond"
+        rounded
+        inline-actions
+        class="bg-warning text-white q-mb-md"
+        role="status"
+        data-testid="reply-banner"
+      >
+        <template #avatar>
+          <q-icon name="priority_high" aria-hidden="true" />
+        </template>
+        {{ t('reply.banner.title') }}
+        <template #action>
+          <q-btn
+            flat
+            no-caps
+            color="white"
+            :label="t('reply.banner.action')"
+            data-testid="reply-banner-action"
+            @click="replyForm?.focus()"
+          />
+        </template>
+      </q-banner>
+
       <q-card flat bordered :aria-label="t('disputeDetail.summary')">
         <q-card-section>
           <div class="row items-center q-gutter-sm">
@@ -213,6 +259,15 @@ async function withdraw(): Promise<void> {
           />
         </q-card-actions>
       </q-card>
+
+      <DisputeReplyForm
+        v-if="dispute.canRespond"
+        ref="replyForm"
+        :dispute-id="dispute.id"
+        :question="question"
+        @replied="onReplied"
+        @conflict="retry"
+      />
 
       <q-card flat bordered class="q-mt-md">
         <q-card-section>

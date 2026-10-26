@@ -115,11 +115,21 @@ public class DisputeService {
 
     @Transactional
     public DisputeView withdraw(UUID customerId, UUID disputeId) {
-        // Lock first, then load the detail: the second of two simultaneous withdrawals waits here and then finds the
-        // dispute already withdrawn.
+        return act(customerId, disputeId, DisputeAction.WITHDRAW, null);
+    }
+
+    /** Answers an agent's request for information; only possible while the dispute is AWAITING_CUSTOMER_INFO. */
+    @Transactional
+    public DisputeView respond(UUID customerId, UUID disputeId, String message) {
+        return act(customerId, disputeId, DisputeAction.CUSTOMER_RESPOND, message);
+    }
+
+    private DisputeView act(UUID customerId, UUID disputeId, DisputeAction action, String message) {
+        // Lock first, then load the detail: the second of two simultaneous actions waits here and then finds the
+        // dispute already moved on, so the state machine answers it instead of the version check.
         disputes.findOwnedByIdForUpdate(disputeId, customerId).orElseThrow(DisputeService::notFound);
         Dispute dispute = disputes.findDetailById(disputeId, customerId).orElseThrow(DisputeService::notFound);
-        stateMachine.apply(dispute, DisputeAction.WITHDRAW, Actor.customer(customerId), null);
+        stateMachine.apply(dispute, action, Actor.customer(customerId), message);
         return view(dispute);
     }
 

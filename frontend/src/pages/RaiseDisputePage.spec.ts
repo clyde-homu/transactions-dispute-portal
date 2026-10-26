@@ -100,6 +100,7 @@ const CREATED: DisputeDetail = {
     },
   ],
   canWithdraw: true,
+  canRespond: false,
 };
 
 let wrapper: VueWrapper;

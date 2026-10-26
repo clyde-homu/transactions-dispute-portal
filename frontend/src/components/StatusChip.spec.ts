@@ -6,7 +6,11 @@ import { createTestI18n, quasarPlugin } from '@/test/vue-helpers';
 
 import StatusChip from './StatusChip.vue';
 
-function mountChip(props: { status: DisputeStatus; prefix?: string }) {
+function mountChip(props: {
+  status: DisputeStatus;
+  prefix?: string;
+  audience?: 'customer' | 'agent';
+}) {
   return mount(StatusChip, { props, global: { plugins: [quasarPlugin, createTestI18n()] } });
 }
 
@@ -44,6 +48,17 @@ describe('StatusChip', () => {
     const wrapper = mountChip({ status: 'WITHDRAWN' });
 
     expect(wrapper.text()).not.toContain('·');
+  });
+
+  it.each([
+    ['AWAITING_CUSTOMER_INFO', 'Waiting for customer'],
+    ['RESOLVED_UPHELD', 'Upheld'],
+    ['UNDER_REVIEW', 'In review'],
+  ] as [DisputeStatus, string][])('words %s for the back office as "%s"', (status, label) => {
+    const wrapper = mountChip({ status, audience: 'agent' });
+
+    expect(wrapper.get('.q-chip__content').text()).toBe(label);
+    expect(wrapper.get('.q-icon').text()).not.toBe('');
   });
 
   it('is not interactive, so it stays out of the tab order', () => {

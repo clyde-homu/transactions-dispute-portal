@@ -49,6 +49,20 @@ describe('toApiError', () => {
     });
   });
 
+  it('recognises DISPUTE_MODIFIED, the code for a lost race between two changes', () => {
+    const error = toApiError(
+      axiosFailure(
+        409,
+        problem(409, 'DISPUTE_MODIFIED', {
+          detail: 'Someone else changed this dispute. Reload and try again.',
+        }),
+      ),
+    );
+
+    expect(error.status).toBe(409);
+    expect(error.code).toBe('DISPUTE_MODIFIED');
+  });
+
   it('keeps the HTTP status but reports UNKNOWN_ERROR for a code the client does not know', () => {
     const error = toApiError(axiosFailure(422, problem(422, 'SOMETHING_NEW')));
 

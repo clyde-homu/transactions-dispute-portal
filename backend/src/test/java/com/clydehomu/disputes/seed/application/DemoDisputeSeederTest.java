@@ -50,10 +50,13 @@ class DemoDisputeSeederTest {
     private final BankTransactionRepository transactions = mock(BankTransactionRepository.class);
     private final AtomicLong sequence = new AtomicLong();
     private DemoDisputeSeeder seeder;
+    private AppUser agent;
 
     @BeforeEach
     void setUp() {
         seeder = new DemoDisputeSeeder(disputes, accounts, transactions, POLICY);
+        agent = new AppUser(DemoCatalogue.AGENT_USERNAME, "hash", DemoCatalogue.AGENT_DISPLAY_NAME, Role.AGENT, NOW);
+        ReflectionTestUtils.setField(agent, "id", UUID.randomUUID());
         when(disputes.nextReferenceNumber()).thenAnswer(call -> sequence.incrementAndGet());
     }
 
@@ -61,7 +64,8 @@ class DemoDisputeSeederTest {
     void thandiGetsSixDisputesOneInEveryStatus() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
 
-        int created = seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        int created =
+                seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         List<Dispute> saved = saved(6);
         assertThat(created).isEqualTo(6);
@@ -75,7 +79,8 @@ class DemoDisputeSeederTest {
     void pieterGetsOneDisputeUnderReview() {
         AppUser pieter = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(1));
 
-        int created = seeder.seedFor(pieter, DemoCatalogue.CUSTOMERS.get(1).disputes(), NOW);
+        int created =
+                seeder.seedFor(pieter, agent, DemoCatalogue.CUSTOMERS.get(1).disputes(), NOW);
 
         assertThat(created).isEqualTo(1);
         Dispute dispute = saved(1).getFirst();
@@ -87,7 +92,7 @@ class DemoDisputeSeederTest {
     @Test
     void everyDisputeIsOnAnEligibleDebitThatIsNotOneOfTheNewest() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         List<Dispute> saved = saved(6);
 
@@ -112,7 +117,7 @@ class DemoDisputeSeederTest {
     @Test
     void theStreamBoxDuplicateChargeIsLeftUndisputed() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         assertThat(saved(6))
                 .extracting(d -> d.getTransaction().getMerchantName())
@@ -122,7 +127,7 @@ class DemoDisputeSeederTest {
     @Test
     void timelinesAreOrderedInThePastAndCarryTheRightActors() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         for (Dispute dispute : saved(6)) {
             List<DisputeEvent> events = dispute.getEvents();
@@ -136,9 +141,7 @@ class DemoDisputeSeederTest {
                     .isEqualTo(dispute.getStatus().isClosed() ? dispute.getUpdatedAt() : null);
             for (DisputeEvent event : events) {
                 if (event.getActorRole() == ActorRole.AGENT) {
-                    assertThat(event.getActorId())
-                            .as("agents have no user rows yet")
-                            .isNull();
+                    assertThat(event.getActorId()).as("the demo agent acts").isEqualTo(agent.getId());
                 } else {
                     assertThat(event.getActorId()).isEqualTo(thandi.getId());
                 }
@@ -147,9 +150,43 @@ class DemoDisputeSeederTest {
     }
 
     @Test
+    void everyClaimedDisputeIsAssignedToTheDemoAgentAndTheSubmittedOneIsNot() {
+        AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+
+        for (Dispute dispute : saved(6)) {
+            boolean claimed = dispute.getEvents().stream().anyMatch(e -> e.getActorRole() == ActorRole.AGENT);
+            assertThat(dispute.getAssignedAgentId())
+                    .as("%s (%s)", dispute.getReference(), dispute.getStatus())
+                    .isEqualTo(claimed ? agent.getId() : null);
+        }
+        assertThat(byStatus(saved(6), DisputeStatus.SUBMITTED).getAssignedAgentId())
+                .as("the queue is never empty")
+                .isNull();
+    }
+
+    @Test
+    void resolutionsCarryAnInternalNoteAndNoOtherStepDoes() {
+        AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+
+        for (Dispute dispute : saved(6)) {
+            for (DisputeEvent event : dispute.getEvents()) {
+                boolean resolution = event.getToStatus() == DisputeStatus.RESOLVED_UPHELD
+                        || event.getToStatus() == DisputeStatus.RESOLVED_DECLINED;
+                if (resolution) {
+                    assertThat(event.getInternalNote()).isNotBlank();
+                } else {
+                    assertThat(event.getInternalNote()).isNull();
+                }
+            }
+        }
+    }
+
+    @Test
     void backOfficeStepsCarryRealisticMessagesForTheCustomer() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         Dispute underReview = byStatus(saved(6), DisputeStatus.UNDER_REVIEW);
         Dispute awaiting = byStatus(saved(6), DisputeStatus.AWAITING_CUSTOMER_INFO);
@@ -174,7 +211,7 @@ class DemoDisputeSeederTest {
     @Test
     void theGymDebitOrderIsTheSubmittedDisputeAndAPartialAmountIsAFractionOfTheTransaction() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
         List<Dispute> saved = saved(6);
 
         Dispute submitted = byStatus(saved, DisputeStatus.SUBMITTED);
@@ -192,7 +229,7 @@ class DemoDisputeSeederTest {
     @Test
     void descriptionsNameTheMerchantAndMeetTheContractLength() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         for (Dispute dispute : saved(6)) {
             assertThat(dispute.getDescription())
@@ -204,7 +241,7 @@ class DemoDisputeSeederTest {
     @Test
     void referencesComeFromTheSequenceAndUseTheYearTheDisputeWasRaised() {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
-        seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         assertThat(saved(6))
                 .extracting(Dispute::getReference)
@@ -222,7 +259,8 @@ class DemoDisputeSeederTest {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
         when(disputes.existsByCustomerId(thandi.getId())).thenReturn(true);
 
-        int created = seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        int created =
+                seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         assertThat(created).isZero();
         verify(disputes, never()).save(any());
@@ -234,7 +272,8 @@ class DemoDisputeSeederTest {
         AppUser thandi = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(0));
         when(transactions.findByAccountId(any())).thenReturn(List.of());
 
-        int created = seeder.seedFor(thandi, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
+        int created =
+                seeder.seedFor(thandi, agent, DemoCatalogue.CUSTOMERS.get(0).disputes(), NOW);
 
         assertThat(created).isZero();
         verify(disputes, never()).save(any());

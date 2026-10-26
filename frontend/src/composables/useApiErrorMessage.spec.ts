@@ -20,6 +20,11 @@ describe('useApiErrorMessage', () => {
       429,
       'Too many failed sign-in attempts. Try again in a few minutes.',
     ],
+    [
+      'DISPUTE_MODIFIED',
+      409,
+      'Someone else changed this dispute at the same moment. Reload it and try again.',
+    ],
     ['TRANSACTION_NOT_ELIGIBLE', 422, 'This transaction cannot be disputed.'],
     ['METHOD_NOT_ALLOWED', 405, 'That action is not available here.'],
     [

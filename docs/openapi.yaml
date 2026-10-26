@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Dispute Portal API
-  version: 1.1.0
-  summary: Customers view their bank transactions, dispute them and follow their dispute history.
+  version: 1.2.0
+  summary: Customers view their bank transactions, dispute them and follow their dispute history; agents work the dispute queue.
   description: |
     REST API behind the Dispute Portal single-page app. The SPA and the API are served from the
     same origin by one Spring Boot application, so there is no CORS configuration.
@@ -16,17 +16,27 @@ info:
     `code`. Clients branch on `code`, never on `title` or `detail`. `errors[]` is present only for
     `VALIDATION_FAILED`.
 
+    **Roles.** `CUSTOMER` may call the `auth`, `accounts`, `transactions` and `disputes`
+    operations. `AGENT` may call `auth`, `GET /dispute-reasons` and the `agent` operations under
+    `/agent/disputes`. Calling the other role's operations returns `403 FORBIDDEN`. After login
+    the SPA routes agents to `/agent` and customers to `/transactions` based on `Me.role`.
+
     **Ownership.** A customer only ever sees their own accounts, transactions and disputes.
     Another customer's resource returns `404 NOT_FOUND`, never `403`, so IDs cannot be probed.
+    Agents see every dispute, but never internal notes through customer views.
 
     **Conventions.** IDs are UUIDs. Money is a JSON string with exactly two decimals
     (`"1250.00"`) next to an ISO-4217 `currency`; amounts are always positive and `direction`
     says whether money left or entered the account. Timestamps are ISO-8601 with offset and are
-    stored in UTC. Lists are newest first and paginated (`page` 0-based, `size` 1..100,
-    default 20).
+    stored in UTC. Customer lists are newest first; the agent queue is oldest first. Lists are
+    paginated (`page` 0-based, `size` 1..100, default 20).
 
-    **Scope of this version.** Customer role only. The agent back office, evidence uploads,
-    idempotency keys, ETag/If-Match and SLA dates are deferred (see ADR 0005).
+    **Concurrency.** Dispute changes use optimistic locking. A change that loses a race with
+    another change returns `409 DISPUTE_MODIFIED`; reload and try again. ETag/If-Match is not
+    used in this version (ADR 0006).
+
+    **Scope of this version.** Customer journey plus the agent back office (ADR 0006). Evidence
+    uploads, idempotency keys, ETag/If-Match, SLA dates and refunds are still deferred (ADR 0005).
 
     **Operational endpoints** (outside `/api/v1`, not described here): Swagger UI at
     `/swagger-ui.html`, this document at `/v3/api-docs`, health at `/actuator/health`
@@ -42,7 +52,9 @@ tags:
   - name: transactions
     description: Transaction detail and dispute eligibility.
   - name: disputes
-    description: Reason catalogue, raising a dispute, dispute history and withdrawal.
+    description: Reason catalogue, raising a dispute, dispute history, withdrawal and replies to information requests.
+  - name: agent
+    description: Back-office dispute queue and agent actions (role AGENT only).
 
 security:
   - sessionCookie: []
@@ -493,6 +505,7 @@ paths:
                     message: null
                     occurredAt: '2026-10-26T07:45:10Z'
                 canWithdraw: true
+                canRespond: false
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -648,6 +661,7 @@ paths:
                     message: We're looking into the duplicate charge with the merchant.
                     occurredAt: '2026-10-25T08:05:41Z'
                 canWithdraw: true
+                canRespond: false
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -721,6 +735,7 @@ paths:
                     message: null
                     occurredAt: '2026-10-26T08:12:03Z'
                 canWithdraw: false
+                canRespond: false
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -730,22 +745,489 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: The dispute is already closed (resolved or withdrawn).
+          description: >-
+            The dispute is already closed (resolved or withdrawn), code INVALID_DISPUTE_TRANSITION;
+            or an agent changed it at the same moment, code DISPUTE_MODIFIED.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
+              examples:
+                closed:
+                  summary: Dispute already closed
+                  value:
+                    type: about:blank
+                    title: Conflict
+                    status: 409
+                    detail: A dispute in status RESOLVED_DECLINED cannot be withdrawn.
+                    instance: /api/v1/disputes/0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f/withdraw
+                    code: INVALID_DISPUTE_TRANSITION
+                modified:
+                  $ref: '#/components/examples/DisputeModified'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /disputes/{id}/responses:
+    post:
+      tags: [disputes]
+      operationId: respondToDispute
+      summary: Reply to an agent's information request (only in AWAITING_CUSTOMER_INFO).
+      description: >-
+        Records the customer's reply as a timeline event and moves the dispute back to
+        UNDER_REVIEW (state machine event `customer_respond`). The dispute stays assigned to the
+        same agent.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: '#/components/parameters/DisputeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerResponseRequest'
+            example:
+              message: The merchant's statement shows two charges of R189.00 on 24 October; I only have one subscription.
+      responses:
+        '200':
+          description: The dispute, now UNDER_REVIEW, with the reply in its timeline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputeDetail'
               example:
-                type: about:blank
-                title: Conflict
-                status: 409
-                detail: A dispute in status RESOLVED_DECLINED cannot be withdrawn.
-                instance: /api/v1/disputes/0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f/withdraw
-                code: INVALID_DISPUTE_TRANSITION
+                id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                reference: DSP-2026-000003
+                status: UNDER_REVIEW
+                reasonCode: P01
+                reasonLabel: I was charged twice
+                disputedAmount: '189.00'
+                currency: ZAR
+                merchantName: StreamBox Subscription
+                createdAt: '2026-10-24T12:30:00Z'
+                updatedAt: '2026-10-26T09:20:00Z'
+                description: StreamBox charged my card twice on the same day for one monthly subscription.
+                transaction:
+                  id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                  reference: TXN-20261024-000184
+                  postedAt: '2026-10-24T09:14:22Z'
+                  amount: '189.00'
+                  currency: ZAR
+                  direction: DEBIT
+                  status: SETTLED
+                  merchantName: StreamBox Subscription
+                  disputeStatus: UNDER_REVIEW
+                timeline:
+                  - id: 4b3a2918-0f7e-4d6c-9b5a-48372615a0f9
+                    status: SUBMITTED
+                    previousStatus: null
+                    actor: CUSTOMER
+                    message: null
+                    occurredAt: '2026-10-24T12:30:00Z'
+                  - id: 6d5c4b3a-2918-4f7e-8d6c-5b4a39281706
+                    status: UNDER_REVIEW
+                    previousStatus: SUBMITTED
+                    actor: AGENT
+                    message: null
+                    occurredAt: '2026-10-25T08:05:41Z'
+                  - id: 7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918
+                    status: AWAITING_CUSTOMER_INFO
+                    previousStatus: UNDER_REVIEW
+                    actor: AGENT
+                    message: Please confirm whether you have one or two StreamBox subscriptions.
+                    occurredAt: '2026-10-25T10:15:00Z'
+                  - id: 8f7e6d5c-4b3a-4291-8a7f-7e6d5c4b3a29
+                    status: UNDER_REVIEW
+                    previousStatus: AWAITING_CUSTOMER_INFO
+                    actor: CUSTOMER
+                    message: The merchant's statement shows two charges of R189.00 on 24 October; I only have one subscription.
+                    occurredAt: '2026-10-26T09:20:00Z'
+                canWithdraw: true
+                canRespond: false
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/DisputeConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /agent/disputes:
+    get:
+      tags: [agent]
+      operationId: listAgentDisputes
+      summary: Page through the dispute work queue, oldest first.
+      description: >-
+        `queue` filters on assignment: UNASSIGNED (no agent yet), MINE (assigned to the caller) or
+        ALL. When `status` is absent, UNASSIGNED and MINE return open disputes only (SUBMITTED,
+        UNDER_REVIEW, AWAITING_CUSTOMER_INFO) and ALL returns every status. Ordered by `createdAt`
+        ascending, then `id` (first in, first out).
+      parameters:
+        - name: queue
+          in: query
+          schema:
+            $ref: '#/components/schemas/AgentQueue'
+          example: UNASSIGNED
+        - name: status
+          in: query
+          description: Keep only these statuses. Repeat the parameter for several.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 6
+            uniqueItems: true
+            items:
+              $ref: '#/components/schemas/DisputeStatus'
+          example: [SUBMITTED]
+        - name: q
+          in: query
+          description: Case-insensitive "contains" match on dispute reference, merchant name or customer name.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: mokoena
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: One page of the queue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDisputePage'
+              example:
+                items:
+                  - id: 1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d
+                    reference: DSP-2026-000008
+                    status: SUBMITTED
+                    reasonCode: P02
+                    reasonLabel: The amount is wrong
+                    disputedAmount: '250.00'
+                    currency: ZAR
+                    merchantName: Metro Fuel N1
+                    customerName: Thandi Mokoena
+                    assignedAgentName: null
+                    createdAt: '2026-10-26T07:45:10Z'
+                    updatedAt: '2026-10-26T07:45:10Z'
+                page: 0
+                size: 20
+                totalItems: 1
+                totalPages: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /agent/disputes/{id}:
+    get:
+      tags: [agent]
+      operationId: getAgentDispute
+      summary: Get any dispute with its full timeline, internal notes and the caller's available actions.
+      parameters:
+        - $ref: '#/components/parameters/AgentDisputeId'
+      responses:
+        '200':
+          description: The dispute as the back office sees it. The timeline is oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDisputeDetail'
+              examples:
+                underReview:
+                  $ref: '#/components/examples/AgentDisputeUnderReview'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /agent/disputes/{id}/claim:
+    post:
+      tags: [agent]
+      operationId: claimDispute
+      summary: Claim a SUBMITTED, unassigned dispute; it moves to UNDER_REVIEW and is assigned to the caller.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: '#/components/parameters/AgentDisputeId'
+      responses:
+        '200':
+          description: The claimed dispute.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDisputeDetail'
+              examples:
+                claimed:
+                  $ref: '#/components/examples/AgentDisputeUnderReview'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/DisputeConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /agent/disputes/{id}/request-info:
+    post:
+      tags: [agent]
+      operationId: requestDisputeInfo
+      summary: Ask the customer for more information (assigned agent, UNDER_REVIEW to AWAITING_CUSTOMER_INFO).
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: '#/components/parameters/AgentDisputeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestInfoRequest'
+            example:
+              message: Please confirm whether you have one or two StreamBox subscriptions.
+      responses:
+        '200':
+          description: The dispute, now AWAITING_CUSTOMER_INFO. `availableActions` is empty until the customer replies.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDisputeDetail'
+              example:
+                id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                reference: DSP-2026-000003
+                status: AWAITING_CUSTOMER_INFO
+                reasonCode: P01
+                reasonLabel: I was charged twice
+                disputedAmount: '189.00'
+                currency: ZAR
+                merchantName: StreamBox Subscription
+                customerName: Thandi Mokoena
+                assignedAgentName: Lerato Dlamini
+                createdAt: '2026-10-24T12:30:00Z'
+                updatedAt: '2026-10-25T10:15:00Z'
+                description: StreamBox charged my card twice on the same day for one monthly subscription.
+                transaction:
+                  id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                  reference: TXN-20261024-000184
+                  postedAt: '2026-10-24T09:14:22Z'
+                  amount: '189.00'
+                  currency: ZAR
+                  direction: DEBIT
+                  status: SETTLED
+                  merchantName: StreamBox Subscription
+                  disputeStatus: AWAITING_CUSTOMER_INFO
+                timeline:
+                  - id: 4b3a2918-0f7e-4d6c-9b5a-48372615a0f9
+                    status: SUBMITTED
+                    previousStatus: null
+                    actor: CUSTOMER
+                    actorName: Thandi Mokoena
+                    message: null
+                    internalNote: null
+                    occurredAt: '2026-10-24T12:30:00Z'
+                  - id: 6d5c4b3a-2918-4f7e-8d6c-5b4a39281706
+                    status: UNDER_REVIEW
+                    previousStatus: SUBMITTED
+                    actor: AGENT
+                    actorName: Lerato Dlamini
+                    message: null
+                    internalNote: null
+                    occurredAt: '2026-10-25T08:05:41Z'
+                  - id: 7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918
+                    status: AWAITING_CUSTOMER_INFO
+                    previousStatus: UNDER_REVIEW
+                    actor: AGENT
+                    actorName: Lerato Dlamini
+                    message: Please confirm whether you have one or two StreamBox subscriptions.
+                    internalNote: null
+                    occurredAt: '2026-10-25T10:15:00Z'
+                availableActions: []
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/DisputeConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /agent/disputes/{id}/resolve:
+    post:
+      tags: [agent]
+      operationId: resolveDispute
+      summary: Resolve a dispute as upheld or declined (assigned agent, UNDER_REVIEW only).
+      description: >-
+        `customerMessage` appears in the customer's timeline. `internalNote` is stored on the same
+        event and is only ever returned by the agent operations.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: '#/components/parameters/AgentDisputeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveDisputeRequest'
+            example:
+              outcome: UPHELD
+              customerMessage: We confirmed the duplicate charge and have reversed R189.00 to your account.
+              internalNote: Merchant acquirer confirmed duplicate authorisation; chargeback raised.
+      responses:
+        '200':
+          description: The resolved dispute. `availableActions` is empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDisputeDetail'
+              example:
+                id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                reference: DSP-2026-000003
+                status: RESOLVED_UPHELD
+                reasonCode: P01
+                reasonLabel: I was charged twice
+                disputedAmount: '189.00'
+                currency: ZAR
+                merchantName: StreamBox Subscription
+                customerName: Thandi Mokoena
+                assignedAgentName: Lerato Dlamini
+                createdAt: '2026-10-24T12:30:00Z'
+                updatedAt: '2026-10-26T10:02:00Z'
+                description: StreamBox charged my card twice on the same day for one monthly subscription.
+                transaction:
+                  id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+                  reference: TXN-20261024-000184
+                  postedAt: '2026-10-24T09:14:22Z'
+                  amount: '189.00'
+                  currency: ZAR
+                  direction: DEBIT
+                  status: SETTLED
+                  merchantName: StreamBox Subscription
+                  disputeStatus: RESOLVED_UPHELD
+                timeline:
+                  - id: 4b3a2918-0f7e-4d6c-9b5a-48372615a0f9
+                    status: SUBMITTED
+                    previousStatus: null
+                    actor: CUSTOMER
+                    actorName: Thandi Mokoena
+                    message: null
+                    internalNote: null
+                    occurredAt: '2026-10-24T12:30:00Z'
+                  - id: 6d5c4b3a-2918-4f7e-8d6c-5b4a39281706
+                    status: UNDER_REVIEW
+                    previousStatus: SUBMITTED
+                    actor: AGENT
+                    actorName: Lerato Dlamini
+                    message: null
+                    internalNote: null
+                    occurredAt: '2026-10-25T08:05:41Z'
+                  - id: 2a1b0c9d-8e7f-4a6b-9c5d-4e3f2a1b0c9d
+                    status: RESOLVED_UPHELD
+                    previousStatus: UNDER_REVIEW
+                    actor: AGENT
+                    actorName: Lerato Dlamini
+                    message: We confirmed the duplicate charge and have reversed R189.00 to your account.
+                    internalNote: Merchant acquirer confirmed duplicate authorisation; chargeback raised.
+                    occurredAt: '2026-10-26T10:02:00Z'
+                availableActions: []
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/DisputeConflict'
         '500':
           $ref: '#/components/responses/InternalError'
 
 components:
+  examples:
+    DisputeModified:
+      summary: Concurrent change detected by optimistic locking
+      value:
+        type: about:blank
+        title: Conflict
+        status: 409
+        detail: Someone else changed this dispute. Reload and try again.
+        instance: /api/v1/agent/disputes/0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f/claim
+        code: DISPUTE_MODIFIED
+    AgentDisputeUnderReview:
+      summary: Claimed dispute, assigned to the caller
+      value:
+        id: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+        reference: DSP-2026-000003
+        status: UNDER_REVIEW
+        reasonCode: P01
+        reasonLabel: I was charged twice
+        disputedAmount: '189.00'
+        currency: ZAR
+        merchantName: StreamBox Subscription
+        customerName: Thandi Mokoena
+        assignedAgentName: Lerato Dlamini
+        createdAt: '2026-10-24T12:30:00Z'
+        updatedAt: '2026-10-25T08:05:41Z'
+        description: StreamBox charged my card twice on the same day for one monthly subscription.
+        transaction:
+          id: 5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d
+          reference: TXN-20261024-000184
+          postedAt: '2026-10-24T09:14:22Z'
+          amount: '189.00'
+          currency: ZAR
+          direction: DEBIT
+          status: SETTLED
+          merchantName: StreamBox Subscription
+          disputeStatus: UNDER_REVIEW
+        timeline:
+          - id: 4b3a2918-0f7e-4d6c-9b5a-48372615a0f9
+            status: SUBMITTED
+            previousStatus: null
+            actor: CUSTOMER
+            actorName: Thandi Mokoena
+            message: null
+            internalNote: null
+            occurredAt: '2026-10-24T12:30:00Z'
+          - id: 6d5c4b3a-2918-4f7e-8d6c-5b4a39281706
+            status: UNDER_REVIEW
+            previousStatus: SUBMITTED
+            actor: AGENT
+            actorName: Lerato Dlamini
+            message: null
+            internalNote: null
+            occurredAt: '2026-10-25T08:05:41Z'
+        availableActions: [REQUEST_INFO, RESOLVE]
+
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -784,6 +1266,15 @@ components:
       in: path
       required: true
       description: Dispute id. Another customer's dispute returns 404.
+      schema:
+        type: string
+        format: uuid
+      example: 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+    AgentDisputeId:
+      name: id
+      in: path
+      required: true
+      description: Dispute id. Agents can reach any dispute; an unknown id returns 404.
       schema:
         type: string
         format: uuid
@@ -848,7 +1339,8 @@ components:
     Forbidden:
       description: >-
         Missing or invalid CSRF token on an unsafe request, or the signed-in role may not call this
-        operation. Never used to hide another customer's resource (that is 404).
+        operation (an agent calling a customer operation, or a customer calling an agent
+        operation). Never used to hide another customer's resource (that is 404).
       content:
         application/problem+json:
           schema:
@@ -873,6 +1365,27 @@ components:
             detail: The requested resource was not found.
             instance: /api/v1/transactions/3c2b1a09-8f7e-4d6c-b5a4-938271605f4e
             code: NOT_FOUND
+    DisputeConflict:
+      description: >-
+        The action is not allowed now, code INVALID_DISPUTE_TRANSITION (wrong status, or for agent
+        actions the caller is not the assigned agent); or another change won the race, code
+        DISPUTE_MODIFIED (reload and try again).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          examples:
+            invalidTransition:
+              summary: Action not allowed in the current status or by this agent
+              value:
+                type: about:blank
+                title: Conflict
+                status: 409
+                detail: Only the assigned agent can resolve a dispute that is UNDER_REVIEW.
+                instance: /api/v1/agent/disputes/0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f/resolve
+                code: INVALID_DISPUTE_TRANSITION
+            modified:
+              $ref: '#/components/examples/DisputeModified'
     InternalError:
       description: Unexpected server error. No stack traces, SQL or class names are exposed.
       content:
@@ -908,7 +1421,9 @@ components:
     # ---------- enums ----------
     Role:
       type: string
-      description: Only CUSTOMER is active in this version. AGENT is reserved for the back office.
+      description: >-
+        CUSTOMER uses the customer operations; AGENT uses the `agent` operations. After login the
+        SPA routes AGENT to `/agent` and CUSTOMER to `/transactions`.
       enum: [CUSTOMER, AGENT]
     ActorRole:
       type: string
@@ -964,6 +1479,7 @@ components:
         - TRANSACTION_NOT_ELIGIBLE
         - DISPUTE_ALREADY_EXISTS
         - INVALID_DISPUTE_TRANSITION
+        - DISPUTE_MODIFIED
         - TOO_MANY_LOGIN_ATTEMPTS
         - METHOD_NOT_ALLOWED
         - NOT_ACCEPTABLE
@@ -1217,7 +1733,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/DisputeSummary'
         - type: object
-          required: [description, transaction, timeline, canWithdraw]
+          required: [description, transaction, timeline, canWithdraw, canRespond]
           properties:
             description:
               type: string
@@ -1232,6 +1748,9 @@ components:
             canWithdraw:
               type: boolean
               description: True when the status is SUBMITTED, UNDER_REVIEW or AWAITING_CUSTOMER_INFO.
+            canRespond:
+              type: boolean
+              description: True only when the status is AWAITING_CUSTOMER_INFO (see `POST /disputes/{id}/responses`).
     DisputePage:
       type: object
       required: [items, page, size, totalItems, totalPages]
@@ -1240,6 +1759,177 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DisputeSummary'
+        page:
+          type: integer
+          format: int32
+          minimum: 0
+        size:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        totalItems:
+          type: integer
+          format: int64
+          minimum: 0
+        totalPages:
+          type: integer
+          format: int32
+          minimum: 0
+
+    CustomerResponseRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: The customer's reply to the information request. Trimmed; must not be blank.
+          minLength: 1
+          maxLength: 1000
+          examples: [The merchant's statement shows two charges of R189.00 on 24 October.]
+
+    # ---------- agent back office ----------
+    AgentQueue:
+      type: string
+      description: UNASSIGNED = no agent yet; MINE = assigned to the caller; ALL = no assignment filter.
+      enum: [UNASSIGNED, MINE, ALL]
+      default: UNASSIGNED
+    AgentAction:
+      type: string
+      description: >-
+        CLAIM when the dispute is SUBMITTED and unassigned. REQUEST_INFO and RESOLVE when it is
+        UNDER_REVIEW and assigned to the caller.
+      enum: [CLAIM, REQUEST_INFO, RESOLVE]
+    ResolutionOutcome:
+      type: string
+      description: UPHELD moves the dispute to RESOLVED_UPHELD; DECLINED to RESOLVED_DECLINED.
+      enum: [UPHELD, DECLINED]
+    RequestInfoRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: Customer-facing question. Trimmed; must not be blank.
+          minLength: 1
+          maxLength: 1000
+          examples: [Please confirm whether you have one or two StreamBox subscriptions.]
+    ResolveDisputeRequest:
+      type: object
+      required: [outcome, customerMessage, internalNote]
+      properties:
+        outcome:
+          $ref: '#/components/schemas/ResolutionOutcome'
+        customerMessage:
+          type: string
+          description: Shown to the customer in their timeline. Trimmed; must not be blank.
+          minLength: 1
+          maxLength: 1000
+          examples: [We confirmed the duplicate charge and have reversed R189.00 to your account.]
+        internalNote:
+          type: string
+          description: Back-office only; never returned by customer operations. Trimmed; must not be blank.
+          minLength: 1
+          maxLength: 1000
+          examples: [Merchant acquirer confirmed duplicate authorisation; chargeback raised.]
+    AgentDisputeSummary:
+      type: object
+      required: [id, reference, status, reasonCode, reasonLabel, disputedAmount, currency, merchantName, customerName, assignedAgentName, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+          pattern: '^DSP-\d{4}-\d{6,}$'
+          examples: [DSP-2026-000003]
+        status:
+          $ref: '#/components/schemas/DisputeStatus'
+        reasonCode:
+          $ref: '#/components/schemas/ReasonCode'
+        reasonLabel:
+          type: string
+          examples: [I was charged twice]
+        disputedAmount:
+          $ref: '#/components/schemas/MoneyAmount'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        merchantName:
+          type: string
+          examples: [StreamBox Subscription]
+        customerName:
+          type: string
+          description: Display name of the customer who raised the dispute.
+          examples: [Thandi Mokoena]
+        assignedAgentName:
+          type: [string, 'null']
+          description: Display name of the assigned agent, or null when unassigned.
+          examples: [Lerato Dlamini]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AgentTimelineEvent:
+      type: object
+      required: [id, status, previousStatus, actor, actorName, message, internalNote, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/DisputeStatus'
+        previousStatus:
+          description: Null for the creation event.
+          oneOf:
+            - $ref: '#/components/schemas/DisputeStatus'
+            - type: 'null'
+        actor:
+          $ref: '#/components/schemas/ActorRole'
+        actorName:
+          type: [string, 'null']
+          description: Display name of the user who acted; null for SYSTEM or when the actor is not recorded.
+          examples: [Lerato Dlamini]
+        message:
+          type: [string, 'null']
+          description: Customer-visible message for this step, if any.
+        internalNote:
+          type: [string, 'null']
+          description: Back-office note, if any. Never shown to customers.
+        occurredAt:
+          type: string
+          format: date-time
+    AgentDisputeDetail:
+      allOf:
+        - $ref: '#/components/schemas/AgentDisputeSummary'
+        - type: object
+          required: [description, transaction, timeline, availableActions]
+          properties:
+            description:
+              type: string
+            transaction:
+              $ref: '#/components/schemas/TransactionSummary'
+            timeline:
+              type: array
+              description: Oldest first, including internal notes.
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/AgentTimelineEvent'
+            availableActions:
+              type: array
+              description: Actions the calling agent may take now. Empty when there are none.
+              uniqueItems: true
+              items:
+                $ref: '#/components/schemas/AgentAction'
+    AgentDisputePage:
+      type: object
+      required: [items, page, size, totalItems, totalPages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentDisputeSummary'
         page:
           type: integer
           format: int32

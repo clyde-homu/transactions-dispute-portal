@@ -76,4 +76,13 @@ public class DisputeController {
     public DisputeDetailResponse withdraw(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID id) {
         return DisputeDetailResponse.from(disputes.withdraw(user.getId(), id));
     }
+
+    @CustomerOnly
+    @PostMapping("/disputes/{id}/responses")
+    public DisputeDetailResponse respond(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID id,
+            @Valid @RequestBody CustomerResponseRequest request) {
+        return DisputeDetailResponse.from(disputes.respond(user.getId(), id, request.message()));
+    }
 }

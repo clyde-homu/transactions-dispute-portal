@@ -50,8 +50,14 @@ function isCandidate(item: TransactionSummary, now: number): boolean {
  * Finds a recent settled debit with no open dispute, asking the API for the data and the server
  * for the final word on eligibility. The seeded "StreamBox" duplicate charge is preferred because
  * it is the demo's own story; any other eligible debit will do if the seeder disputed both.
+ *
+ * A test that leaves its dispute resolved (not withdrawn) uses up the transaction for good, so it
+ * passes `keepDemoStory` to leave the StreamBox charges for the tests that give them back.
  */
-export async function findDisputableTransaction(page: Page): Promise<DisputableTransaction> {
+export async function findDisputableTransaction(
+  page: Page,
+  options: { keepDemoStory?: boolean } = {},
+): Promise<DisputableTransaction> {
   const now = Date.now();
   const accounts = await getJson<Account[]>(page, '/api/v1/accounts');
 
@@ -65,12 +71,10 @@ export async function findDisputableTransaction(page: Page): Promise<DisputableT
       if (isCandidate(item, now)) candidates.push({ account, item });
     }
   }
-  // Stable sort: StreamBox first, otherwise the API's newest-first order is kept.
-  candidates.sort(
-    (a, b) =>
-      Number(b.item.merchantName.includes('StreamBox')) -
-      Number(a.item.merchantName.includes('StreamBox')),
-  );
+  // Stable sort: the API's newest-first order is kept within each group.
+  const rank = (item: TransactionSummary): number =>
+    Number(item.merchantName.includes('StreamBox')) * (options.keepDemoStory ? -1 : 1);
+  candidates.sort((a, b) => rank(b.item) - rank(a.item));
 
   for (const { account, item } of candidates.slice(0, MAX_DETAIL_CHECKS)) {
     const detail = await getJson<TransactionDetail>(page, `/api/v1/transactions/${item.id}`);

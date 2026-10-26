@@ -21,10 +21,15 @@ final class DemoCatalogue {
     /** The seeder treats the presence of this user as "demo data already loaded". */
     static final String MARKER_USERNAME = "thandi";
 
+    /** The back-office agent who works the seeded disputes; created on its own so older databases gain it too. */
+    static final String AGENT_USERNAME = "lerato";
+
+    static final String AGENT_DISPLAY_NAME = "Lerato Dlamini";
+
     record AccountSpec(String productName, String maskedNumber, BigDecimal balance, Profile ledger) {}
 
     /** One move in a demo dispute's history, made {@code after} the previous event by whoever the action belongs to. */
-    record DisputeStep(DisputeAction action, Duration after, String message) {}
+    record DisputeStep(DisputeAction action, Duration after, String message, String internalNote) {}
 
     /**
      * A dispute to seed. The transaction is not named: the seeder picks the latest eligible debit on the account that
@@ -154,10 +159,11 @@ final class DemoCatalogue {
                                                     DisputeAction.CUSTOMER_RESPOND,
                                                     Duration.ofDays(2),
                                                     "My card was in my wallet all day and I have never shared my PIN with anyone."),
-                                            step(
+                                            resolution(
                                                     DisputeAction.RESOLVE_UPHELD,
                                                     Duration.ofDays(3),
-                                                    "The merchant could not show that you authorised this payment, so we have upheld your dispute."))),
+                                                    "The merchant could not show that you authorised this payment, so we have upheld your dispute.",
+                                                    "No signed slip or chip and PIN record from the acquirer. Customer statement consistent. Chargeback raised under fraud code F01."))),
                             new DisputeSpec(
                                     CARD,
                                     Duration.ofDays(19).plusHours(2),
@@ -170,10 +176,11 @@ final class DemoCatalogue {
                                                     DisputeAction.CLAIM,
                                                     Duration.ofDays(1),
                                                     "We've asked the merchant to confirm when and how the refund was paid."),
-                                            step(
+                                            resolution(
                                                     DisputeAction.RESOLVE_DECLINED,
                                                     Duration.ofDays(6),
-                                                    "The merchant showed that the refund was paid back to your card on the day it was approved, so we couldn't uphold this dispute."))),
+                                                    "The merchant showed that the refund was paid back to your card on the day it was approved, so we couldn't uphold this dispute.",
+                                                    "Merchant supplied the refund reference and settlement date. Credit is visible on the card ledger. Closed as declined."))),
                             new DisputeSpec(
                                     CHEQUE,
                                     Duration.ofDays(14),
@@ -261,7 +268,12 @@ final class DemoCatalogue {
     private DemoCatalogue() {}
 
     private static DisputeStep step(DisputeAction action, Duration after, String message) {
-        return new DisputeStep(action, after, message);
+        return new DisputeStep(action, after, message, null);
+    }
+
+    /** Resolving is the one step that also records a back-office note. */
+    private static DisputeStep resolution(DisputeAction action, Duration after, String message, String internalNote) {
+        return new DisputeStep(action, after, message, internalNote);
     }
 
     private static Merchant card(String name, String category, int minCents, int maxCents) {

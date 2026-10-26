@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -65,8 +66,9 @@ class DemoDataSeederTest {
     }
 
     @Test
-    void doesNothingWhenTheDemoCustomerAlreadyExists() {
+    void doesNothingWhenTheDemoCustomersAndTheAgentAlreadyExist() {
         when(users.existsByUsername("thandi")).thenReturn(true);
+        when(users.findByUsername("lerato")).thenReturn(Optional.of(existingAgent()));
 
         seeder.seed();
 
@@ -76,18 +78,34 @@ class DemoDataSeederTest {
     }
 
     @Test
-    void createsTwoCustomersWithTheDemoPasswordHashed() {
+    void aDatabaseSeededBeforeTheBackOfficeGainsTheAgentAndNothingElse() {
+        when(users.existsByUsername("thandi")).thenReturn(true);
+
         seeder.seed();
 
         ArgumentCaptor<AppUser> saved = ArgumentCaptor.forClass(AppUser.class);
-        verify(users, times(2)).save(saved.capture());
+        verify(users).save(saved.capture());
+        assertThat(saved.getValue())
+                .extracting(AppUser::getUsername, AppUser::getDisplayName, AppUser::getRole, AppUser::getPasswordHash)
+                .containsExactly("lerato", "Lerato Dlamini", Role.AGENT, "hash-of-demo-password");
+        verify(accounts, never()).save(any());
+        verify(transactions, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createsTwoCustomersAndTheAgentWithTheDemoPasswordHashed() {
+        seeder.seed();
+
+        ArgumentCaptor<AppUser> saved = ArgumentCaptor.forClass(AppUser.class);
+        verify(users, times(3)).save(saved.capture());
         assertThat(saved.getAllValues())
                 .extracting(AppUser::getUsername, AppUser::getDisplayName, AppUser::getRole)
                 .containsExactly(
                         tuple("thandi", "Thandi Mokoena", Role.CUSTOMER),
-                        tuple("pieter", "Pieter van der Merwe", Role.CUSTOMER));
+                        tuple("pieter", "Pieter van der Merwe", Role.CUSTOMER),
+                        tuple("lerato", "Lerato Dlamini", Role.AGENT));
         assertThat(saved.getAllValues()).extracting(AppUser::getPasswordHash).containsOnly("hash-of-demo-password");
-        verify(encoder, times(2)).encode("demo-password");
+        verify(encoder, times(3)).encode("demo-password");
     }
 
     @Test
@@ -95,7 +113,7 @@ class DemoDataSeederTest {
         seeder.seed();
 
         ArgumentCaptor<AppUser> savedUsers = ArgumentCaptor.forClass(AppUser.class);
-        verify(users, times(2)).save(savedUsers.capture());
+        verify(users, times(3)).save(savedUsers.capture());
         UUID thandiId = savedUsers.getAllValues().get(0).getId();
         UUID pieterId = savedUsers.getAllValues().get(1).getId();
         ArgumentCaptor<Account> savedAccounts = ArgumentCaptor.forClass(Account.class);
@@ -176,6 +194,12 @@ class DemoDataSeederTest {
                 .run(context -> assertThat(context).hasSingleBean(DemoDataSeeder.class));
         runner.withPropertyValues("app.seed.enabled=false")
                 .run(context -> assertThat(context).doesNotHaveBean(DemoDataSeeder.class));
+    }
+
+    private static AppUser existingAgent() {
+        AppUser agent = new AppUser("lerato", "hash", "Lerato Dlamini", Role.AGENT, NOW);
+        ReflectionTestUtils.setField(agent, "id", UUID.randomUUID());
+        return agent;
     }
 
     private static AppProperties properties() {

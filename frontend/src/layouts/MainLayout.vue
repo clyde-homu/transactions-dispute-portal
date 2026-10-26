@@ -12,7 +12,14 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-const navItems = [
+interface NavItem {
+  name: string;
+  path: string;
+  labelKey: string;
+  icon: string;
+}
+
+const CUSTOMER_NAV: readonly NavItem[] = [
   {
     name: 'transactions',
     path: '/transactions',
@@ -20,10 +27,16 @@ const navItems = [
     icon: 'receipt_long',
   },
   { name: 'disputes', path: '/disputes', labelKey: 'nav.disputes', icon: 'report_problem' },
-] as const;
+];
+const AGENT_NAV: readonly NavItem[] = [
+  { name: 'agent-queue', path: '/agent', labelKey: 'nav.queue', icon: 'inbox' },
+];
+
+// Each role only sees the sections it can open; the route guard enforces the same split.
+const navItems = computed(() => (auth.user?.role === 'AGENT' ? AGENT_NAV : CUSTOMER_NAV));
 
 // A detail page such as /disputes/:id still belongs to its section, so match by prefix.
-function isActive(item: { path: string }): boolean {
+function isActive(item: NavItem): boolean {
   return route.path === item.path || route.path.startsWith(`${item.path}/`);
 }
 

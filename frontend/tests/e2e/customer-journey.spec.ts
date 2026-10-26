@@ -1,74 +1,18 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 import type { DisputePage } from '../../src/api/types';
 import { copy, fill, moneyPattern } from './support/copy';
 import { findDisputableTransaction, type DisputableTransaction } from './support/data';
+import {
+  DISPUTE,
+  fillAndSubmitDispute,
+  findInHistory,
+  openFromTransactionsList,
+  readReference,
+} from './support/disputes';
 import { pieter, thandi } from './support/env';
-import { login, mainNavigation, signOut } from './support/session';
-
-// Reason wording comes from the server (docs/domain.md section 4), not from the app's messages.
-const CATEGORY = 'Processing error';
-const REASON = 'I was charged twice';
-const PARTIAL_AMOUNT = '50.00';
-const DESCRIPTION =
-  'The same monthly subscription was taken from my card twice within a couple of minutes.';
-const REFERENCE = /^DSP-\d{4}-\d{6,}$/;
-
-const messages = copy.raiseDispute;
-
-function heading(page: Page, name: string): Locator {
-  return page.getByRole('heading', { name });
-}
-
-/**
- * Clicks a category or reason tile the way a customer does. The radio inside it is visually hidden
- * and covered by the tile, so clicking the radio itself is refused; the tile's text is the target.
- */
-async function chooseTile(page: Page, label: string): Promise<void> {
-  await page.getByText(label, { exact: true }).click();
-  await expect(page.getByRole('radio', { name: label })).toBeChecked();
-}
-
-/** Moves to the next step and waits until the previous one has left, so only one is on screen. */
-async function continueTo(page: Page, from: string, to: string): Promise<void> {
-  await page.getByRole('button', { name: messages.continue }).click();
-  await expect(heading(page, to)).toBeVisible();
-  await expect(heading(page, from)).toHaveCount(0);
-}
-
-/** A list entry: a table row on wide screens, a linked card on phones. */
-function listEntry(page: Page, text: string): Locator {
-  return page
-    .getByRole('row')
-    .filter({ hasText: text })
-    .or(page.getByRole('list').getByRole('link').filter({ hasText: text }));
-}
-
-/** Rows hold a link named after one cell; on phones the whole card is the link. */
-async function openListEntry(entry: Locator, linkName: string): Promise<void> {
-  const inner = entry.getByRole('link', { name: linkName });
-  await ((await inner.count()) > 0 ? inner : entry).click();
-}
-
-async function openFromTransactionsList(page: Page, target: DisputableTransaction): Promise<void> {
-  await mainNavigation(page).getByRole('link', { name: copy.nav.transactions }).click();
-
-  // The accounts are shown as cards; the list below follows the selected one.
-  await page.getByRole('button', { name: target.accountMaskedNumber }).click();
-  await expect(
-    page.getByRole('button', { name: target.accountMaskedNumber, pressed: true }),
-  ).toBeVisible();
-
-  // The search applies after a short pause. Clicking before the filtered list arrives can lose the
-  // navigation to the list's own address update, so wait for the one-row result first.
-  await page.getByLabel(copy.transactions.filters.search).fill(target.reference);
-  await expect(
-    page.getByText(fill(copy.transactions.list.summary, { from: 1, to: 1, total: 1 })),
-  ).toBeVisible();
-  const entry = listEntry(page, target.reference);
-  await expect(entry).toHaveCount(1);
-  await openListEntry(entry, target.merchantName);
-}
+import { login, signOut } from './support/session';
+import { heading, openListEntry } from './support/ui';
 
 test.describe('customer journey', () => {
   test(
@@ -89,58 +33,17 @@ test.describe('customer journey', () => {
       });
 
       await test.step('she raises a dispute for part of the amount', async () => {
-        await page
-          .getByRole('link', { name: copy.transactionDetail.eligibility.disputeButton })
-          .click();
-        await expect(page).toHaveURL(new RegExp(`/transactions/${target.id}/dispute$`));
-        await expect(heading(page, copy.pages.disputeNew.title)).toBeVisible();
-
-        // 1. category
-        await expect(heading(page, messages.steps.category.title)).toBeVisible();
-        await chooseTile(page, CATEGORY);
-        await continueTo(page, messages.steps.category.title, messages.steps.reason.title);
-
-        // 2. reason
-        await chooseTile(page, REASON);
-        await continueTo(page, messages.steps.reason.title, messages.steps.details.title);
-
-        // 3. amount and description
-        await page.getByRole('switch', { name: messages.partialToggle }).click();
-        await page.getByLabel(messages.partialAmount).fill(PARTIAL_AMOUNT);
-        await page.getByLabel(messages.description).fill(DESCRIPTION);
-        await continueTo(page, messages.steps.details.title, messages.steps.review.title);
-
-        // 4. review, declare, submit
-        const summary = page.getByRole('definition');
-        await expect(summary.filter({ hasText: CATEGORY })).toBeVisible();
-        await expect(summary.filter({ hasText: REASON })).toBeVisible();
-        await expect(summary.filter({ hasText: moneyPattern(PARTIAL_AMOUNT) })).toBeVisible();
-        await expect(summary.filter({ hasText: DESCRIPTION })).toBeVisible();
-
-        await page.getByRole('checkbox', { name: messages.declaration }).check();
-        await page.getByRole('button', { name: messages.submit }).click();
+        await fillAndSubmitDispute(page, target);
       });
 
       await test.step('the confirmation shows a DSP reference', async () => {
-        await expect(heading(page, messages.success.title)).toBeVisible();
-        const referenceText = page.getByText(REFERENCE);
-        await expect(referenceText).toBeVisible();
-        reference = (await referenceText.innerText()).trim();
-        expect(reference).toMatch(REFERENCE);
+        reference = await readReference(page);
       });
 
       await test.step('the history lists it as Submitted', async () => {
-        await mainNavigation(page).getByRole('link', { name: copy.nav.disputes }).click();
-        await expect(heading(page, copy.pages.disputes.title)).toBeVisible();
-
-        await page.getByLabel(copy.disputes.filters.search).fill(reference);
-        await expect(
-          page.getByText(fill(copy.disputes.list.summary, { from: 1, to: 1, total: 1 })),
-        ).toBeVisible();
-        const entry = listEntry(page, reference);
-        await expect(entry).toHaveCount(1);
+        const entry = await findInHistory(page, reference);
         await expect(entry).toContainText(copy.disputeStatus.SUBMITTED);
-        await expect(entry).toContainText(moneyPattern(PARTIAL_AMOUNT));
+        await expect(entry).toContainText(moneyPattern(DISPUTE.partialAmount));
         await expect(entry).toContainText(target.merchantName);
         await openListEntry(entry, reference);
       });
@@ -149,9 +52,9 @@ test.describe('customer journey', () => {
         await expect(heading(page, reference)).toBeVisible();
         const card = page.getByLabel(copy.disputeDetail.summary);
         await expect(card).toContainText(copy.disputeStatus.SUBMITTED);
-        await expect(card).toContainText(moneyPattern(PARTIAL_AMOUNT));
+        await expect(card).toContainText(moneyPattern(DISPUTE.partialAmount));
         await expect(card).not.toContainText(copy.disputeDetail.fullAmount);
-        await expect(card).toContainText(DESCRIPTION);
+        await expect(card).toContainText(DISPUTE.description);
 
         await expect(heading(page, copy.disputeDetail.timeline.heading)).toBeVisible();
         const submitted = page

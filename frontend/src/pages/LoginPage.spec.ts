@@ -17,6 +17,13 @@ vi.mock('@/api/auth');
 
 const Stub = defineComponent({ render: () => null });
 
+const lerato: Me = {
+  id: '2c1d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f',
+  username: 'lerato',
+  displayName: 'Lerato Dlamini',
+  role: 'AGENT',
+};
+
 const thandi: Me = {
   id: '6d0b8a51-3f2c-4e7a-9b14-0c5e2f7a9d31',
   username: 'thandi',
@@ -35,6 +42,7 @@ async function mountLogin(url = '/login') {
       { path: '/login', name: 'login', component: LoginPage },
       { path: '/transactions', name: 'transactions', component: Stub },
       { path: '/disputes', name: 'disputes', component: Stub },
+      { path: '/agent', name: 'agent-queue', component: Stub },
     ],
   });
   await router.push(url);
@@ -74,7 +82,9 @@ describe('LoginPage', () => {
     const labels = wrapper.findAll('label').map((label) => label.text());
     expect(labels).toEqual(expect.arrayContaining([expect.stringContaining('Username')]));
     expect(wrapper.text()).toContain('Password');
-    expect(wrapper.text()).toContain('Demo users: thandi or pieter, password demo-password');
+    expect(wrapper.text()).toContain(
+      'Demo users: thandi or pieter (customers), lerato (agent). Password: demo-password',
+    );
     expect(wrapper.get('h1').text()).toBe('Sign in');
   });
 
@@ -207,6 +217,15 @@ describe('LoginPage', () => {
       expect(authApi.login).toHaveBeenCalledWith({ username: 'thandi', password: 'demo-password' });
       expect(auth.user).toEqual(thandi);
       expect(router.currentRoute.value.name).toBe('transactions');
+    });
+
+    it('sends an agent to the queue', async () => {
+      vi.mocked(authApi.login).mockResolvedValue(lerato);
+      const { router } = await mountLogin();
+
+      await fillAndSubmit('lerato', 'demo-password');
+
+      expect(router.currentRoute.value.name).toBe('agent-queue');
     });
 
     it('returns to the page the user was heading for', async () => {

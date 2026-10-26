@@ -104,15 +104,16 @@ class StandaloneModeSmokeTest {
     }
 
     @Test
-    void flywayAppliedTheInitialMigration() {
-        Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '1' and success = true", Integer.class);
+    void flywayAppliedEveryMigration() {
+        List<String> applied = jdbc.queryForList(
+                "select version from flyway_schema_history where success = true and version is not null order by installed_rank",
+                String.class);
         Integer tables = jdbc.queryForObject(
                 "select count(*) from information_schema.tables where table_name in "
                         + "('app_user', 'account', 'bank_transaction', 'dispute', 'dispute_event')",
                 Integer.class);
 
-        assertThat(applied).isEqualTo(1);
+        assertThat(applied).containsExactly("1", "2", "3");
         assertThat(tables).isEqualTo(5);
     }
 
@@ -166,6 +167,71 @@ class StandaloneModeSmokeTest {
         assertThat(references).hasSizeGreaterThanOrEqualTo(7).allMatch(r -> r.matches("DSP-\\d{4}-\\d{6}"));
         assertThat(jdbc.queryForObject("select count(*) from dispute_event", Integer.class))
                 .isGreaterThanOrEqualTo(7);
+    }
+
+    @Test
+    void theDemoAgentIsSeededAndHoldsTheClaimedDisputesWhileTheQueueIsNeverEmpty() {
+        Integer agents = jdbc.queryForObject(
+                "select count(*) from app_user where username = 'lerato' and role = 'AGENT'", Integer.class);
+        Integer unassignedSubmitted = jdbc.queryForObject(
+                "select count(*) from dispute where status = 'SUBMITTED' and assigned_agent_id is null", Integer.class);
+        Integer assigned =
+                jdbc.queryForObject("select count(*) from dispute where assigned_agent_id is not null", Integer.class);
+        Integer agentEventsWithoutAnActor = jdbc.queryForObject(
+                "select count(*) from dispute_event where actor_role = 'AGENT' and actor_id is null", Integer.class);
+        Integer notes = jdbc.queryForObject(
+                "select count(*) from dispute_event where note_internal is not null", Integer.class);
+
+        assertThat(agents).isEqualTo(1);
+        assertThat(unassignedSubmitted).isGreaterThanOrEqualTo(1);
+        assertThat(assigned).isGreaterThanOrEqualTo(5);
+        assertThat(agentEventsWithoutAnActor).isZero();
+        assertThat(notes).as("one per seeded resolution").isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void theAgentQueueAndDetailWorkOnH2AndKeepInternalNotesFromCustomers() throws Exception {
+        AuthenticatedUser lerato =
+                new AuthenticatedUser(users.findByUsername("lerato").orElseThrow());
+        AuthenticatedUser thandi =
+                new AuthenticatedUser(users.findByUsername("thandi").orElseThrow());
+
+        mockMvc.perform(get("/api/v1/agent/disputes").with(user(lerato)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.status != 'SUBMITTED')]").isEmpty())
+                .andExpect(jsonPath("$.items[0].customerName").isNotEmpty())
+                .andExpect(jsonPath("$.items[0].assignedAgentName").value((Object) null));
+        mockMvc.perform(get("/api/v1/agent/disputes?queue=MINE").with(user(lerato)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].assignedAgentName").value("Lerato Dlamini"))
+                .andExpect(jsonPath("$.items[?(@.status == 'RESOLVED_UPHELD')]").isEmpty());
+        mockMvc.perform(get("/api/v1/agent/disputes?queue=ALL&status=RESOLVED_UPHELD&q=MOKOENA")
+                        .with(user(lerato)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].customerName").value("Thandi Mokoena"));
+
+        String upheldId = JsonPath.read(
+                mockMvc.perform(get("/api/v1/agent/disputes?queue=ALL&status=RESOLVED_UPHELD&size=1")
+                                .with(user(lerato)))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString(),
+                "$.items[0].id");
+        mockMvc.perform(get("/api/v1/agent/disputes/" + upheldId).with(user(lerato)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.timeline[-1:].internalNote").isNotEmpty())
+                .andExpect(jsonPath("$.timeline[-1:].actorName").value("Lerato Dlamini"))
+                .andExpect(jsonPath("$.availableActions.length()").value(0));
+        String customerView = mockMvc.perform(
+                        get("/api/v1/disputes/" + upheldId).with(user(thandi)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(customerView).doesNotContain("internalNote").doesNotContain("Lerato");
+        mockMvc.perform(get("/api/v1/agent/disputes").with(user(thandi))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/disputes").with(user(lerato))).andExpect(status().isForbidden());
     }
 
     @Test

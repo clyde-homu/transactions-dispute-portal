@@ -36,6 +36,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class DisputeStateMachineTest {
 
@@ -44,7 +45,11 @@ class DisputeStateMachineTest {
     private static final UUID OTHER_CUSTOMER = UUID.fromString("0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
 
     private static final Actor OWNER = Actor.customer(CUSTOMER);
-    private static final Actor AGENT = Actor.agent();
+    private static final UUID AGENT_ID = UUID.fromString("3b9a7c52-1d4e-4f68-a0b3-7c8d9e0f1a2b");
+    private static final UUID OTHER_AGENT_ID = UUID.fromString("9c8b7a65-4e3d-4c2b-8a19-0f1e2d3c4b5a");
+
+    private static final Actor AGENT = Actor.agent(AGENT_ID);
+    private static final Actor OTHER_AGENT = Actor.agent(OTHER_AGENT_ID);
 
     /** Every legal move, straight from the transition table in docs/domain.md. */
     private static final Map<DisputeAction, Map<DisputeStatus, DisputeStatus>> LEGAL = legalMoves();
@@ -108,7 +113,7 @@ class DisputeStateMachineTest {
         Instant later = NOW.plus(Duration.ofHours(5));
         Actor actor = actorFor(action);
 
-        DisputeEvent event = machineAt(later).apply(dispute, action, actor, messageFor(action));
+        DisputeEvent event = machineAt(later).apply(dispute, action, actor, messageFor(action), noteFor(action));
 
         assertThat(dispute.getStatus()).isEqualTo(to);
         assertThat(dispute.getUpdatedAt()).isEqualTo(later);
@@ -120,7 +125,10 @@ class DisputeStateMachineTest {
         assertThat(event.getActorRole()).isEqualTo(action.actor());
         assertThat(event.getActorId()).isEqualTo(actor.id());
         assertThat(event.getMessage()).isEqualTo(messageFor(action));
+        assertThat(event.getInternalNote()).isEqualTo(noteFor(action));
         assertThat(event.getCreatedAt()).isEqualTo(later);
+        UUID expectedAssignee = from == SUBMITTED && action != CLAIM ? null : AGENT_ID;
+        assertThat(dispute.getAssignedAgentId()).as("only a claim assigns").isEqualTo(expectedAssignee);
     }
 
     @Test
@@ -225,13 +233,159 @@ class DisputeStateMachineTest {
     }
 
     @Test
-    void agentEventsCarryTheRoleAndNoActorId() {
+    void agentEventsCarryTheRoleAndTheAgentsId() {
         Dispute dispute = disputeIn(SUBMITTED);
 
         DisputeEvent event = machine.apply(dispute, CLAIM, AGENT, "We have picked this up.");
 
         assertThat(event.getActorRole()).isEqualTo(ActorRole.AGENT);
-        assertThat(event.getActorId()).isNull();
+        assertThat(event.getActorId()).isEqualTo(AGENT_ID);
+    }
+
+    // ---- assignment ----
+
+    @Test
+    void aClaimAssignsTheDisputeToTheClaimingAgentAndNoneBeforeIt() {
+        Dispute dispute = disputeIn(SUBMITTED);
+        assertThat(dispute.getAssignedAgentId()).isNull();
+
+        machine.apply(dispute, CLAIM, OTHER_AGENT, null);
+
+        assertThat(dispute.getAssignedAgentId()).isEqualTo(OTHER_AGENT_ID);
+    }
+
+    @Test
+    void aDisputeThatIsAlreadyAssignedCannotBeClaimedAgain() {
+        Dispute dispute = disputeIn(SUBMITTED);
+        ReflectionTestUtils.setField(dispute, "assignedAgentId", AGENT_ID);
+
+        assertThatThrownBy(() -> machine.apply(dispute, CLAIM, OTHER_AGENT, null))
+                .isInstanceOf(InvalidDisputeTransitionException.class)
+                .hasMessage("This dispute has already been claimed.");
+        assertThat(dispute.getAssignedAgentId()).isEqualTo(AGENT_ID);
+        assertThat(dispute.getStatus()).isEqualTo(SUBMITTED);
+    }
+
+    @Test
+    void anotherAgentCannotRequestInfoOrResolveAClaimedDispute() {
+        Dispute dispute = disputeIn(UNDER_REVIEW);
+        int eventsBefore = dispute.getEvents().size();
+
+        assertThatThrownBy(() -> machine.apply(dispute, REQUEST_INFO, OTHER_AGENT, "Question?"))
+                .isInstanceOf(InvalidDisputeTransitionException.class)
+                .hasMessage("Only the assigned agent can request information on this dispute.");
+        assertRejected(() -> machine.apply(dispute, RESOLVE_UPHELD, OTHER_AGENT, "Done.", "Note."));
+        assertRejected(() -> machine.apply(dispute, RESOLVE_DECLINED, OTHER_AGENT, "Done.", "Note."));
+
+        assertThat(dispute.getStatus()).isEqualTo(UNDER_REVIEW);
+        assertThat(dispute.getEvents()).hasSize(eventsBefore);
+        assertThat(dispute.getAssignedAgentId()).isEqualTo(AGENT_ID);
+    }
+
+    @Test
+    void theAssignedAgentKeepsTheDisputeAfterTheCustomerReplies() {
+        Dispute dispute = disputeIn(AWAITING_CUSTOMER_INFO);
+
+        machine.apply(dispute, CUSTOMER_RESPOND, OWNER, "Here is the invoice.");
+        machine.apply(dispute, RESOLVE_UPHELD, AGENT, "Upheld.", "Invoice checked.");
+
+        assertThat(dispute.getAssignedAgentId()).isEqualTo(AGENT_ID);
+        assertThat(dispute.getStatus()).isEqualTo(DisputeStatus.RESOLVED_UPHELD);
+    }
+
+    @Test
+    void anAgentWithoutAnIdCannotActOnADispute() {
+        Actor anonymousAgent = new Actor(ActorRole.AGENT, null);
+
+        assertRejected(() -> machine.apply(disputeIn(SUBMITTED), CLAIM, anonymousAgent, null));
+        assertRejected(() -> machine.apply(disputeIn(UNDER_REVIEW), REQUEST_INFO, anonymousAgent, "Question?"));
+    }
+
+    // ---- internal notes ----
+
+    @Test
+    void resolvingNeedsAnInternalNote() {
+        for (DisputeAction action : List.of(RESOLVE_UPHELD, RESOLVE_DECLINED)) {
+            Dispute dispute = disputeIn(UNDER_REVIEW);
+            for (String missing : new String[] {null, "", "   "}) {
+                assertThatThrownBy(() -> machine.apply(dispute, action, AGENT, "Done.", missing))
+                        .isInstanceOfSatisfying(
+                                ValidationFailedException.class,
+                                e -> assertThat(e.getViolations())
+                                        .singleElement()
+                                        .satisfies(v -> {
+                                            assertThat(v.field()).isEqualTo("internalNote");
+                                            assertThat(v.message()).isEqualTo("is required");
+                                        }));
+            }
+            assertThat(dispute.getStatus()).isEqualTo(UNDER_REVIEW);
+        }
+    }
+
+    @Test
+    void anInternalNoteOverOneThousandCharactersIsRejectedAndOneIsTrimmed() {
+        Dispute dispute = disputeIn(UNDER_REVIEW);
+
+        assertThatThrownBy(() -> machine.apply(dispute, RESOLVE_UPHELD, AGENT, "Done.", "n".repeat(1001)))
+                .isInstanceOfSatisfying(
+                        ValidationFailedException.class,
+                        e -> assertThat(e.getViolations().getFirst().field()).isEqualTo("internalNote"));
+
+        DisputeEvent event = machine.apply(dispute, RESOLVE_UPHELD, AGENT, "Done.", "  Checked with the acquirer.  ");
+        assertThat(event.getInternalNote()).isEqualTo("Checked with the acquirer.");
+    }
+
+    @Test
+    void stepsThatDoNotNeedANoteLeaveItEmpty() {
+        Dispute dispute = disputeIn(SUBMITTED);
+
+        DisputeEvent claim = machine.apply(dispute, CLAIM, AGENT, null);
+        DisputeEvent ask = machine.apply(dispute, REQUEST_INFO, AGENT, "Question?");
+
+        assertThat(claim.getInternalNote()).isNull();
+        assertThat(ask.getInternalNote()).isNull();
+    }
+
+    // ---- what an actor can do next ----
+
+    @Test
+    void anUnassignedSubmittedDisputeOffersAnAgentOnlyTheClaim() {
+        Dispute dispute = disputeIn(SUBMITTED);
+
+        assertThat(machine.availableActions(dispute, AGENT)).containsExactly(CLAIM);
+        assertThat(machine.availableActions(dispute, OWNER)).containsExactly(WITHDRAW);
+    }
+
+    @Test
+    void theAssignedAgentCanAskOrResolveWhileUnderReview() {
+        Dispute dispute = disputeIn(UNDER_REVIEW);
+
+        assertThat(machine.availableActions(dispute, AGENT))
+                .containsExactlyInAnyOrder(REQUEST_INFO, RESOLVE_UPHELD, RESOLVE_DECLINED);
+        assertThat(machine.availableActions(dispute, OTHER_AGENT)).isEmpty();
+        assertThat(machine.availableActions(dispute, OWNER)).containsExactly(WITHDRAW);
+    }
+
+    @Test
+    void whileWaitingForTheCustomerTheAgentIsIdleAndTheCustomerCanReply() {
+        Dispute dispute = disputeIn(AWAITING_CUSTOMER_INFO);
+
+        assertThat(machine.availableActions(dispute, AGENT)).isEmpty();
+        assertThat(machine.availableActions(dispute, OWNER)).containsExactlyInAnyOrder(CUSTOMER_RESPOND, WITHDRAW);
+        assertThat(machine.availableActions(dispute, Actor.customer(OTHER_CUSTOMER)))
+                .isEmpty();
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = DisputeStatus.class,
+            names = {"RESOLVED_UPHELD", "RESOLVED_DECLINED", "WITHDRAWN"})
+    void aClosedDisputeOffersNobodyAnything(DisputeStatus closed) {
+        Dispute dispute = disputeIn(closed);
+
+        assertThat(machine.availableActions(dispute, AGENT)).isEmpty();
+        assertThat(machine.availableActions(dispute, OWNER)).isEmpty();
+        assertThat(machine.availableActions(dispute, Actor.system())).isEmpty();
     }
 
     // ---- messages ----
@@ -260,12 +414,13 @@ class DisputeStateMachineTest {
     void aMessageOverOneThousandCharactersIsRejectedButExactlyOneThousandIsKept() {
         Dispute dispute = disputeIn(UNDER_REVIEW);
 
-        assertThatThrownBy(() -> machine.apply(dispute, RESOLVE_DECLINED, AGENT, "x".repeat(1001)))
+        assertThatThrownBy(() -> machine.apply(dispute, RESOLVE_DECLINED, AGENT, "x".repeat(1001), "Note."))
                 .isInstanceOf(ValidationFailedException.class);
         assertThat(dispute.getStatus()).isEqualTo(UNDER_REVIEW);
 
-        DisputeEvent event = machine.apply(dispute, RESOLVE_DECLINED, AGENT, "x".repeat(1000));
+        DisputeEvent event = machine.apply(dispute, RESOLVE_DECLINED, AGENT, "x".repeat(1000), "y".repeat(1000));
         assertThat(event.getMessage()).hasSize(1000);
+        assertThat(event.getInternalNote()).hasSize(1000);
     }
 
     @Test
@@ -287,7 +442,8 @@ class DisputeStateMachineTest {
         machineAt(NOW.plus(Duration.ofHours(2))).apply(dispute, CLAIM, AGENT, null);
         machineAt(NOW.plus(Duration.ofDays(1))).apply(dispute, REQUEST_INFO, AGENT, "Please send the invoice.");
         machineAt(NOW.plus(Duration.ofDays(2))).apply(dispute, CUSTOMER_RESPOND, OWNER, "Invoice attached.");
-        machineAt(NOW.plus(Duration.ofDays(3))).apply(dispute, RESOLVE_UPHELD, AGENT, "Your dispute is upheld.");
+        machineAt(NOW.plus(Duration.ofDays(3)))
+                .apply(dispute, RESOLVE_UPHELD, AGENT, "Your dispute is upheld.", "Acquirer confirmed.");
 
         assertThat(dispute.getEvents())
                 .extracting(DisputeEvent::getFromStatus, DisputeEvent::getToStatus, DisputeEvent::getActorRole)
@@ -353,6 +509,10 @@ class DisputeStateMachineTest {
         return action.messageRequired() ? "A message for the customer." : null;
     }
 
+    private static String noteFor(DisputeAction action) {
+        return action.internalNoteRequired() ? "A note for the back office." : null;
+    }
+
     private static DisputeStateMachine machineAt(Instant at) {
         return new DisputeStateMachine(Clock.fixed(at, ZoneOffset.UTC));
     }
@@ -373,11 +533,11 @@ class DisputeStateMachineTest {
             }
             case RESOLVED_UPHELD -> {
                 machine.apply(dispute, CLAIM, AGENT, null);
-                machine.apply(dispute, RESOLVE_UPHELD, AGENT, "Upheld.");
+                machine.apply(dispute, RESOLVE_UPHELD, AGENT, "Upheld.", "Note.");
             }
             case RESOLVED_DECLINED -> {
                 machine.apply(dispute, CLAIM, AGENT, null);
-                machine.apply(dispute, RESOLVE_DECLINED, AGENT, "Declined.");
+                machine.apply(dispute, RESOLVE_DECLINED, AGENT, "Declined.", "Note.");
             }
             case WITHDRAWN -> machine.apply(dispute, WITHDRAW, OWNER, null);
         }

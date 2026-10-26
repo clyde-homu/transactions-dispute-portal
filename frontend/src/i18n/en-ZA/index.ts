@@ -9,6 +9,7 @@ export default {
     primary: 'Main navigation',
     transactions: 'Transactions',
     disputes: 'Disputes',
+    queue: 'Queue',
     signOut: 'Sign out',
     signedInAs: 'Signed in as {name}',
   },
@@ -25,7 +26,7 @@ export default {
     showPassword: 'Show password',
     hidePassword: 'Hide password',
     submit: 'Sign in',
-    demoHint: 'Demo users: thandi or pieter, password demo-password',
+    demoHint: 'Demo users: thandi or pieter (customers), lerato (agent). Password: demo-password',
     validation: {
       usernameRequired: 'Enter your username.',
       usernameTooLong: 'Your username can be at most 50 characters.',
@@ -43,6 +44,8 @@ export default {
     TRANSACTION_NOT_ELIGIBLE: 'This transaction cannot be disputed.',
     DISPUTE_ALREADY_EXISTS: 'A dispute already exists for this transaction.',
     INVALID_DISPUTE_TRANSITION: 'This dispute can no longer be changed that way.',
+    DISPUTE_MODIFIED:
+      'Someone else changed this dispute at the same moment. Reload it and try again.',
     TOO_MANY_LOGIN_ATTEMPTS: 'Too many failed sign-in attempts. Try again in a few minutes.',
     METHOD_NOT_ALLOWED: 'That action is not available here.',
     NOT_ACCEPTABLE: 'The server could not provide the information in the format requested.',
@@ -65,6 +68,15 @@ export default {
     UNDER_REVIEW: 'In review',
     AWAITING_CUSTOMER_INFO: 'Action needed',
     RESOLVED_UPHELD: 'Resolved in your favour',
+    RESOLVED_DECLINED: 'Declined',
+    WITHDRAWN: 'Withdrawn',
+  },
+  // What the back office calls each status: "Action needed" is the customer's job, not the agent's.
+  agentStatus: {
+    SUBMITTED: 'Submitted',
+    UNDER_REVIEW: 'In review',
+    AWAITING_CUSTOMER_INFO: 'Waiting for customer',
+    RESOLVED_UPHELD: 'Upheld',
     RESOLVED_DECLINED: 'Declined',
     WITHDRAWN: 'Withdrawn',
   },
@@ -310,6 +322,155 @@ export default {
       conflict: 'This dispute can no longer be withdrawn. We have refreshed it.',
     },
   },
+  reply: {
+    heading: 'Reply to the disputes team',
+    intro:
+      'The disputes team needs more information before they can decide. Your reply is added to the dispute.',
+    asked: 'They asked',
+    label: 'Your reply',
+    hint: 'Up to 1000 characters.',
+    submit: 'Send reply',
+    success: 'Your reply has been sent to the disputes team.',
+    conflict: {
+      INVALID_DISPUTE_TRANSITION:
+        'This dispute is no longer waiting for your reply. We have refreshed it.',
+      DISPUTE_MODIFIED:
+        'This dispute changed while you were writing. We have refreshed it, so please check it and send your reply again.',
+    },
+    banner: {
+      title: 'Action needed: the disputes team asked you for more information.',
+      action: 'Reply now',
+    },
+    validation: {
+      required: 'Write a reply before you send it.',
+      tooLong: 'Keep your reply to 1000 characters or fewer.',
+    },
+  },
+  agentQueue: {
+    tabsLabel: 'Queue',
+    tabs: {
+      UNASSIGNED: 'Unassigned',
+      MINE: 'Mine',
+      ALL: 'All',
+    },
+    search: 'Search reference, merchant or customer',
+    loading: 'Loading the queue',
+    summary: 'Showing {from}–{to} of {total} disputes',
+    pagination: 'Queue pages',
+    column: {
+      reference: 'Reference',
+      customer: 'Customer',
+      merchant: 'Merchant',
+      reason: 'Reason',
+      amount: 'Amount',
+      status: 'Status',
+      assignedTo: 'Assigned to',
+      created: 'Raised',
+    },
+    unassigned: 'Unassigned',
+    assignedTo: 'Assigned to {name}',
+    created: 'Raised {date}',
+    errorTitle: 'We could not load the queue',
+    empty: {
+      UNASSIGNED: {
+        title: 'Nothing is waiting for an agent',
+        description:
+          'Every open dispute has an owner. New disputes appear here as customers raise them.',
+      },
+      MINE: {
+        title: 'You have no disputes assigned',
+        description: 'Claim a dispute from the Unassigned tab and it will be listed here.',
+      },
+      ALL: {
+        title: 'There are no disputes yet',
+        description: 'Disputes that customers raise will appear here.',
+      },
+    },
+    emptyFilteredTitle: 'No disputes match your search',
+    emptyFilteredDescription: 'Check the spelling, or clear the search to see the whole tab.',
+    clearSearch: 'Clear search',
+    goToUnassigned: 'Go to Unassigned',
+  },
+  agentDispute: {
+    back: 'Back to the queue',
+    loading: 'Loading dispute',
+    errorTitle: 'We could not load this dispute',
+    notFoundTitle: 'We could not find that dispute',
+    notFoundDescription: 'The link may be out of date. Go back to the queue to find it.',
+    summary: 'Dispute summary',
+    unassigned: 'Unassigned',
+    fields: {
+      reason: 'Reason',
+      customer: 'Customer',
+      merchant: 'Merchant',
+      disputedAmount: 'Amount disputed',
+      assignedAgent: 'Assigned agent',
+      transaction: 'Transaction',
+      raised: 'Raised',
+      updated: 'Last updated',
+      description: 'Customer description',
+    },
+    transactionValue: '{reference}, posted {date}',
+    timeline: {
+      heading: 'History',
+      by: 'By {actor}',
+      actor: {
+        CUSTOMER: 'Customer',
+        AGENT: 'Agent',
+        SYSTEM: 'System',
+      },
+      internalNote: 'Internal note',
+      internalNoteHint: 'Only the back office can see this.',
+    },
+    actions: {
+      label: 'Actions for this dispute',
+      claim: 'Claim',
+      requestInfo: 'Request information',
+      resolve: 'Resolve',
+      none: 'You have no actions on this dispute right now.',
+    },
+    claim: {
+      success: 'You now own {reference}. It is in review.',
+    },
+    requestInfo: {
+      title: 'Ask the customer for more information',
+      description: 'The customer sees this in their timeline and is asked to reply.',
+      message: 'Message to the customer',
+      hint: 'Up to 1000 characters.',
+      submit: 'Send request',
+      cancel: 'Cancel',
+      success: 'Your request for {reference} has been sent to the customer.',
+    },
+    resolve: {
+      title: 'Resolve this dispute',
+      outcome: 'Outcome',
+      upheld: 'Upheld: the customer is right',
+      declined: 'Declined: the charge stands',
+      customerMessage: 'Message to the customer',
+      customerMessageHint: 'The customer sees this in their timeline.',
+      internalNote: 'Internal note',
+      internalNoteHint: 'Only the back office can see this.',
+      submit: 'Resolve dispute',
+      cancel: 'Cancel',
+      success: {
+        UPHELD: '{reference} resolved as upheld.',
+        DECLINED: '{reference} resolved as declined.',
+      },
+    },
+    conflict: {
+      INVALID_DISPUTE_TRANSITION:
+        'That action is no longer available on this dispute. We have refreshed it.',
+      DISPUTE_MODIFIED:
+        'Someone else changed this dispute at the same moment. We have refreshed it, so please check it and try again.',
+    },
+    validation: {
+      messageRequired: 'Write a message for the customer.',
+      customerMessageRequired: 'Write a message for the customer.',
+      internalNoteRequired: 'Write an internal note.',
+      outcomeRequired: 'Choose an outcome.',
+      tooLong: 'Keep this to 1000 characters or fewer.',
+    },
+  },
   pages: {
     transactions: {
       title: 'Transactions',
@@ -326,11 +487,19 @@ export default {
     disputeDetail: {
       title: 'Dispute details',
     },
+    agentQueue: {
+      title: 'Dispute queue',
+    },
+    agentDispute: {
+      title: 'Review dispute',
+    },
     notFound: {
       title: 'Page not found',
       emptyTitle: 'We could not find that page',
       emptyDescription: 'The link may be out of date. Head back to your transactions to carry on.',
       action: 'Go to transactions',
+      agentDescription: 'The link may be out of date. Head back to the queue to carry on.',
+      agentAction: 'Go to the queue',
     },
   },
 };

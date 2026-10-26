@@ -186,6 +186,30 @@ class DemoDataSeederIT extends PostgresIntegrationSupport {
     }
 
     @Test
+    void theDemoAgentIsSeededOnceAndCanSignInAsAnAgent() {
+        AppUser lerato = users.findByUsername("lerato").orElseThrow();
+        TestBrowser browser = new TestBrowser(port);
+        browser.get("/api/v1/auth/csrf");
+
+        HttpResponse<String> login = browser.postJson(
+                "/api/v1/auth/login",
+                "{\"username\":\"lerato\",\"password\":\"%s\"}"
+                        .formatted(properties.demo().password()));
+
+        assertThat(lerato.getDisplayName()).isEqualTo("Lerato Dlamini");
+        assertThat(lerato.getRole()).isEqualTo(Role.AGENT);
+        assertThat(lerato.getPasswordHash())
+                .startsWith("$2")
+                .doesNotContain(properties.demo().password());
+        assertThat(count("select count(*) from app_user where username = 'lerato'"))
+                .isEqualTo(1);
+        assertThat(login.statusCode()).isEqualTo(200);
+        assertThat(JsonPath.<String>read(login.body(), "$.role")).isEqualTo("AGENT");
+        assertThat(JsonPath.<String>read(login.body(), "$.displayName")).isEqualTo("Lerato Dlamini");
+        assertThat(accounts.findByOwnerIdOrderByProductNameAsc(lerato.getId())).isEmpty();
+    }
+
+    @Test
     void aWrongPasswordIsStillRejectedForASeededCustomer() {
         TestBrowser browser = new TestBrowser(port);
         browser.get("/api/v1/auth/csrf");
@@ -259,9 +283,11 @@ class DemoDataSeederIT extends PostgresIntegrationSupport {
         assertThat(count("""
                 select count(*) from dispute_event e
                 join dispute d on d.id = e.dispute_id join app_user u on u.id = d.customer_id
-                where u.username in %s and e.actor_role = 'AGENT' and e.actor_id is not null
+                where u.username in %s and e.actor_role = 'AGENT'
+                  and (e.actor_id is null
+                       or not exists (select 1 from app_user a where a.id = e.actor_id and a.role = 'AGENT'))
                 """.formatted(DEMO_CUSTOMERS)))
-                .as("seeded agents have no user rows")
+                .as("every back-office event names an agent user")
                 .isZero();
         assertThat(count("""
                 select count(*) from dispute d join app_user u on u.id = d.customer_id
@@ -286,6 +312,49 @@ class DemoDataSeederIT extends PostgresIntegrationSupport {
                 """.formatted(DEMO_CUSTOMERS), now))
                 .as("every event is after the dispute was raised and before now")
                 .isZero();
+    }
+
+    @Test
+    void claimedDisputesAreAssignedToTheAgentWhoActedOnThemAndTheQueueIsNeverEmpty() {
+        UUID lerato = users.findByUsername("lerato").orElseThrow().getId();
+
+        assertThat(count("""
+                select count(*) from dispute d join app_user u on u.id = d.customer_id
+                where u.username in %s
+                  and exists (select 1 from dispute_event e where e.dispute_id = d.id and e.actor_role = 'AGENT'
+                              and e.actor_id is distinct from d.assigned_agent_id)
+                """.formatted(DEMO_CUSTOMERS)))
+                .as("every agent event was made by the dispute's assignee")
+                .isZero();
+        assertThat(count("""
+                select count(*) from dispute d join app_user u on u.id = d.customer_id
+                where u.username in %s and d.assigned_agent_id is not null
+                  and not exists (select 1 from dispute_event e where e.dispute_id = d.id and e.actor_role = 'AGENT')
+                """.formatted(DEMO_CUSTOMERS)))
+                .as("assignment always comes from a claim")
+                .isZero();
+        assertThat(count("select count(*) from dispute where assigned_agent_id = ?", lerato))
+                .as("the seeded claims are Lerato's")
+                .isGreaterThanOrEqualTo(5);
+        assertThat(count("select count(*) from dispute where status = 'SUBMITTED' and assigned_agent_id is null"))
+                .as("something to claim")
+                .isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void seededResolutionsKeepTheirInternalNotesAndNothingElseDoes() {
+        assertThat(count("""
+                select count(*) from dispute_event e
+                join dispute d on d.id = e.dispute_id join app_user u on u.id = d.customer_id
+                where u.username = 'thandi' and e.to_status in ('RESOLVED_UPHELD', 'RESOLVED_DECLINED')
+                  and e.actor_role = 'AGENT' and (e.note_internal is null or e.message is null)
+                """)).isZero();
+        assertThat(count("""
+                select count(*) from dispute_event e
+                join dispute d on d.id = e.dispute_id join app_user u on u.id = d.customer_id
+                where u.username in %s and e.note_internal is not null
+                  and e.to_status not in ('RESOLVED_UPHELD', 'RESOLVED_DECLINED')
+                """.formatted(DEMO_CUSTOMERS))).isZero();
     }
 
     @Test

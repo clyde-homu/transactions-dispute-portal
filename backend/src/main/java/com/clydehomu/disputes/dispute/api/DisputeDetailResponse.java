@@ -10,7 +10,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-/** A dispute with the transaction it is about and its timeline, oldest event first. */
+/**
+ * A dispute with the transaction it is about and its timeline, oldest event first. {@code canRespond} is true only
+ * while an agent is waiting for the customer's answer.
+ */
 public record DisputeDetailResponse(
         UUID id,
         String reference,
@@ -25,7 +28,8 @@ public record DisputeDetailResponse(
         String description,
         TransactionSummaryResponse transaction,
         List<TimelineEventResponse> timeline,
-        boolean canWithdraw) {
+        boolean canWithdraw,
+        boolean canRespond) {
 
     static DisputeDetailResponse from(DisputeView view) {
         Dispute dispute = view.dispute();
@@ -45,6 +49,7 @@ public record DisputeDetailResponse(
                 TransactionSummaryResponse.from(
                         dispute.getTransaction(), transactionStatus == null ? null : transactionStatus.name()),
                 dispute.getEvents().stream().map(TimelineEventResponse::from).toList(),
-                dispute.getStatus().isOpen());
+                dispute.getStatus().isOpen(),
+                dispute.getStatus() == DisputeStatus.AWAITING_CUSTOMER_INFO);
     }
 }

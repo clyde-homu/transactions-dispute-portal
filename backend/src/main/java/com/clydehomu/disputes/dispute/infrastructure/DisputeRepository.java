@@ -26,6 +26,18 @@ public interface DisputeRepository extends JpaRepository<Dispute, UUID>, JpaSpec
     Optional<Dispute> findDetailById(UUID id, UUID customerId);
 
     /**
+     * The same fetch for the back office, which reaches every customer's disputes. Only the agent API may call it: it
+     * has no ownership filter.
+     */
+    @Query("""
+            select distinct d from Dispute d
+            join fetch d.transaction
+            left join fetch d.events
+            where d.id = :id
+            """)
+    Optional<Dispute> findAnyDetailById(UUID id);
+
+    /**
      * Locks the row so two withdrawals of the same dispute run one after the other; the second then sees the new status
      * and is refused by the state machine instead of failing on the version check. No fetch joins here, because a lock
      * combined with an outer join is not portable.

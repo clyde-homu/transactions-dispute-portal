@@ -28,9 +28,16 @@ const thandi: Me = {
   role: 'CUSTOMER',
 };
 
+const lerato: Me = {
+  id: '2c1d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f',
+  username: 'lerato',
+  displayName: 'Lerato Dlamini',
+  role: 'AGENT',
+};
+
 let wrapper: VueWrapper;
 
-async function mountLayout(path: string) {
+async function mountLayout(path: string, user: Me = thandi) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const router = createRouter({
@@ -44,11 +51,13 @@ async function mountLayout(path: string) {
           { path: 'transactions', name: 'transactions', component: Stub },
           { path: 'disputes', name: 'disputes', component: Stub },
           { path: 'disputes/:id', name: 'dispute-detail', component: Stub },
+          { path: 'agent', name: 'agent-queue', component: Stub },
+          { path: 'agent/disputes/:id', name: 'agent-dispute-detail', component: Stub },
         ],
       },
     ],
   });
-  vi.mocked(authApi.login).mockResolvedValue(thandi);
+  vi.mocked(authApi.login).mockResolvedValue(user);
   const auth = useAuthStore();
   await auth.login({ username: 'thandi', password: 'demo-password' });
   await router.push(path);
@@ -148,6 +157,34 @@ describe('MainLayout', () => {
       expect(drawer.text()).toContain('Transactions');
       expect(drawer.text()).toContain('Disputes');
       expect(drawer.text()).toContain('Sign out');
+    });
+  });
+
+  describe('for an agent', () => {
+    it.each([
+      ['on a phone', 390, 'footer nav'],
+      ['on a desktop', 1280, 'aside nav'],
+    ])('offers only the queue and Sign out %s, under their name', async (_where, width, nav) => {
+      await setViewportWidth(width);
+      await mountLayout('/agent', lerato);
+
+      const links = wrapper.get(nav);
+      expect(links.text()).toContain('Queue');
+      expect(links.text()).toContain('Sign out');
+      expect(links.text()).not.toContain('Transactions');
+      expect(links.text()).not.toContain('Disputes');
+      expect(wrapper.get('[data-testid="user-display-name"]').text()).toBe('Lerato Dlamini');
+    });
+
+    it('keeps the queue marked as current on a dispute under it', async () => {
+      await setViewportWidth(390);
+      await mountLayout('/agent/disputes/abc', lerato);
+
+      const current = wrapper
+        .findAll('footer nav a')
+        .filter((tab) => tab.attributes('aria-current') === 'page');
+      expect(current).toHaveLength(1);
+      expect(current[0]?.text()).toContain('Queue');
     });
   });
 

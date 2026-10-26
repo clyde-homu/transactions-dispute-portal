@@ -49,6 +49,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -56,6 +57,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
@@ -68,6 +70,7 @@ class DisputeControllerTest {
     private static final UUID CUSTOMER_ID = UUID.fromString("6d0b8a51-3f2c-4e7a-9b14-0c5e2f7a9d31");
     private static final UUID TRANSACTION_ID = UUID.fromString("5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d");
     private static final UUID DISPUTE_ID = UUID.fromString("0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f");
+    private static final UUID AGENT_ID = UUID.fromString("3b9a7c52-1d4e-4f68-a0b3-7c8d9e0f1a2b");
     private static final Instant RAISED_AT = Instant.parse("2026-10-24T12:30:00.987Z");
     private static final String VALID_BODY = """
             {"transactionId":"%s","reasonCode":"P02","amount":"250.00",
@@ -150,7 +153,8 @@ class DisputeControllerTest {
                 .andExpect(jsonPath("$.timeline[0].actor").value("CUSTOMER"))
                 .andExpect(jsonPath("$.timeline[0].message").value((Object) null))
                 .andExpect(jsonPath("$.timeline[0].occurredAt").value("2026-10-24T12:30:00Z"))
-                .andExpect(jsonPath("$.canWithdraw").value(true));
+                .andExpect(jsonPath("$.canWithdraw").value(true))
+                .andExpect(jsonPath("$.canRespond").value(false));
     }
 
     @Test
@@ -489,7 +493,7 @@ class DisputeControllerTest {
     void detailShowsTheTimelineOldestFirstAndCanWithdraw() throws Exception {
         Dispute dispute = submitted();
         new DisputeStateMachine(Clock.fixed(RAISED_AT.plusSeconds(3600), ZoneOffset.UTC))
-                .apply(dispute, DisputeAction.CLAIM, Actor.agent(), "We're looking into the duplicate charge.");
+                .apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), "We're looking into the duplicate charge.");
         when(service.get(CUSTOMER_ID, DISPUTE_ID)).thenReturn(new DisputeView(dispute, DisputeStatus.UNDER_REVIEW));
 
         mockMvc.perform(get("/api/v1/disputes/" + DISPUTE_ID).with(user(customer)))
@@ -621,7 +625,197 @@ class DisputeControllerTest {
         verifyNoInteractions(service);
     }
 
+    // ---- respond ----
+
+    @Test
+    void respondReturnsTheDisputeBackInReviewWithTheReplyOnTheTimeline() throws Exception {
+        when(service.respond(eq(CUSTOMER_ID), eq(DISPUTE_ID), any())).thenReturn(answered());
+
+        mockMvc.perform(respondRequest("  The statement shows two charges.  "))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/json"))
+                .andExpect(jsonPath("$.status").value("UNDER_REVIEW"))
+                .andExpect(jsonPath("$.canRespond").value(false))
+                .andExpect(jsonPath("$.canWithdraw").value(true))
+                .andExpect(jsonPath("$.timeline.length()").value(4))
+                .andExpect(jsonPath("$.timeline[2].status").value("AWAITING_CUSTOMER_INFO"))
+                .andExpect(jsonPath("$.timeline[3].status").value("UNDER_REVIEW"))
+                .andExpect(jsonPath("$.timeline[3].previousStatus").value("AWAITING_CUSTOMER_INFO"))
+                .andExpect(jsonPath("$.timeline[3].actor").value("CUSTOMER"))
+                .andExpect(jsonPath("$.timeline[3].message").value("The statement shows two charges."));
+
+        verify(service).respond(CUSTOMER_ID, DISPUTE_ID, "The statement shows two charges.");
+    }
+
+    @Test
+    void aDisputeWaitingForTheCustomerCanBeRespondedTo() throws Exception {
+        Dispute dispute = submitted();
+        DisputeStateMachine machine = new DisputeStateMachine(Clock.fixed(RAISED_AT.plusSeconds(3600), ZoneOffset.UTC));
+        machine.apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), null);
+        machine.apply(dispute, DisputeAction.REQUEST_INFO, Actor.agent(AGENT_ID), "Please send the till slip.");
+        when(service.get(CUSTOMER_ID, DISPUTE_ID))
+                .thenReturn(new DisputeView(dispute, DisputeStatus.AWAITING_CUSTOMER_INFO));
+
+        mockMvc.perform(get("/api/v1/disputes/" + DISPUTE_ID).with(user(customer)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("AWAITING_CUSTOMER_INFO"))
+                .andExpect(jsonPath("$.canRespond").value(true))
+                .andExpect(jsonPath("$.timeline[2].message").value("Please send the till slip."));
+    }
+
+    @Test
+    void theCustomerTimelineNeverCarriesInternalNotesOrAgentIds() throws Exception {
+        Dispute dispute = submitted();
+        DisputeStateMachine machine = new DisputeStateMachine(Clock.fixed(RAISED_AT.plusSeconds(3600), ZoneOffset.UTC));
+        machine.apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), null);
+        machine.apply(
+                dispute, DisputeAction.RESOLVE_UPHELD, Actor.agent(AGENT_ID), "We upheld it.", "SECRET-INTERNAL-NOTE");
+        when(service.get(CUSTOMER_ID, DISPUTE_ID)).thenReturn(new DisputeView(dispute, DisputeStatus.RESOLVED_UPHELD));
+
+        String body = mockMvc.perform(get("/api/v1/disputes/" + DISPUTE_ID).with(user(customer)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.timeline[2].message").value("We upheld it."))
+                .andExpect(jsonPath("$.timeline[2].internalNote").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(body).doesNotContain("SECRET-INTERNAL-NOTE").doesNotContain(AGENT_ID.toString());
+    }
+
+    @ParameterizedTest(name = "a {0} reply is rejected")
+    @ValueSource(strings = {"{\"message\":\"   \"}", "{\"message\":\"\"}", "{\"other\":1}", "{\"message\":null}"})
+    void aBlankOrMissingReplyIsAValidationProblemOnMessage(String body) throws Exception {
+        mockMvc.perform(withCsrf(post("/api/v1/disputes/" + DISPUTE_ID + "/responses"))
+                        .with(user(customer))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors[0].field").value("message"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void aReplyOverOneThousandCharactersIsRejectedAndExactlyOneThousandIsAccepted() throws Exception {
+        mockMvc.perform(respondRequest("x".repeat(1001)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("message"))
+                .andExpect(jsonPath("$.errors[0].message").value("must be between 1 and 1000 characters"));
+        verifyNoInteractions(service);
+
+        when(service.respond(any(), any(), any())).thenReturn(answered());
+        mockMvc.perform(respondRequest("x".repeat(1000))).andExpect(status().isOk());
+    }
+
+    @Test
+    void respondWithAMalformedBodyOrAnIdThatIsNotAUuidIsAValidationProblem() throws Exception {
+        mockMvc.perform(withCsrf(post("/api/v1/disputes/" + DISPUTE_ID + "/responses"))
+                        .with(user(customer))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{not json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        mockMvc.perform(withCsrf(post("/api/v1/disputes/nope/responses"))
+                        .with(user(customer))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Hello\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("id"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void respondingToSomeoneElsesDisputeIsAProblem404() throws Exception {
+        when(service.respond(any(), any(), any()))
+                .thenThrow(new NotFoundException("The requested resource was not found."));
+
+        mockMvc.perform(respondRequest("Hello there."))
+                .andExpect(status().isNotFound())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.instance").value("/api/v1/disputes/" + DISPUTE_ID + "/responses"));
+    }
+
+    @Test
+    void respondingWhenNothingWasAskedIsAProblem409() throws Exception {
+        when(service.respond(any(), any(), any()))
+                .thenThrow(
+                        new InvalidDisputeTransitionException("A dispute in status UNDER_REVIEW cannot be answered."));
+
+        mockMvc.perform(respondRequest("Unprompted."))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("INVALID_DISPUTE_TRANSITION"))
+                .andExpect(jsonPath("$.detail").value("A dispute in status UNDER_REVIEW cannot be answered."));
+    }
+
+    @Test
+    void respondingAfterAConcurrentChangeIsAProblem409DisputeModified() throws Exception {
+        when(service.respond(any(), any(), any()))
+                .thenThrow(new ObjectOptimisticLockingFailureException(Dispute.class, DISPUTE_ID));
+
+        mockMvc.perform(respondRequest("Hello there."))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("DISPUTE_MODIFIED"))
+                .andExpect(jsonPath("$.detail").value("Someone else changed this dispute. Reload and try again."));
+    }
+
+    @Test
+    void respondNeedsASessionACsrfTokenAndTheCustomerRole() throws Exception {
+        String path = "/api/v1/disputes/" + DISPUTE_ID + "/responses";
+        String body = "{\"message\":\"Hello there.\"}";
+
+        mockMvc.perform(withCsrf(post(path))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+        mockMvc.perform(post(path)
+                        .with(user(customer))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(withCsrf(post(path))
+                        .with(user(agent))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        verifyNoInteractions(service);
+    }
+
     // ---- helpers ----
+
+    private MockHttpServletRequestBuilder respondRequest(String message) {
+        return withCsrf(post("/api/v1/disputes/" + DISPUTE_ID + "/responses"))
+                .with(user(customer))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"" + message + "\"}");
+    }
+
+    /** A dispute the agent asked about and the customer then answered, as the service would return it. */
+    private static DisputeView answered() {
+        Dispute dispute = submitted();
+        Actor agentActor = Actor.agent(AGENT_ID);
+        new DisputeStateMachine(Clock.fixed(RAISED_AT.plusSeconds(3600), ZoneOffset.UTC))
+                .apply(dispute, DisputeAction.CLAIM, agentActor, null);
+        new DisputeStateMachine(Clock.fixed(RAISED_AT.plusSeconds(7200), ZoneOffset.UTC))
+                .apply(dispute, DisputeAction.REQUEST_INFO, agentActor, "Please send the till slip.");
+        new DisputeStateMachine(Clock.fixed(RAISED_AT.plusSeconds(10_800), ZoneOffset.UTC))
+                .apply(
+                        dispute,
+                        DisputeAction.CUSTOMER_RESPOND,
+                        Actor.customer(CUSTOMER_ID),
+                        "The statement shows two charges.");
+        return new DisputeView(dispute, DisputeStatus.UNDER_REVIEW);
+    }
 
     private MockHttpServletRequestBuilder createRequest() {
         return withCsrf(post("/api/v1/disputes"))

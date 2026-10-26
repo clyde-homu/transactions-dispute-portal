@@ -208,6 +208,117 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disputes/{id}/responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reply to an agent's information request (only in AWAITING_CUSTOMER_INFO).
+         * @description Records the customer's reply as a timeline event and moves the dispute back to UNDER_REVIEW (state machine event `customer_respond`). The dispute stays assigned to the same agent.
+         */
+        post: operations["respondToDispute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/disputes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page through the dispute work queue, oldest first.
+         * @description `queue` filters on assignment: UNASSIGNED (no agent yet), MINE (assigned to the caller) or ALL. When `status` is absent, UNASSIGNED and MINE return open disputes only (SUBMITTED, UNDER_REVIEW, AWAITING_CUSTOMER_INFO) and ALL returns every status. Ordered by `createdAt` ascending, then `id` (first in, first out).
+         */
+        get: operations["listAgentDisputes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/disputes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get any dispute with its full timeline, internal notes and the caller's available actions. */
+        get: operations["getAgentDispute"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/disputes/{id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim a SUBMITTED, unassigned dispute; it moves to UNDER_REVIEW and is assigned to the caller. */
+        post: operations["claimDispute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/disputes/{id}/request-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the customer for more information (assigned agent, UNDER_REVIEW to AWAITING_CUSTOMER_INFO). */
+        post: operations["requestDisputeInfo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/disputes/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve a dispute as upheld or declined (assigned agent, UNDER_REVIEW only).
+         * @description `customerMessage` appears in the customer's timeline. `internalNote` is stored on the same event and is only ever returned by the agent operations.
+         */
+        post: operations["resolveDispute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -228,7 +339,7 @@ export interface components {
          */
         CurrencyCode: string;
         /**
-         * @description Only CUSTOMER is active in this version. AGENT is reserved for the back office.
+         * @description CUSTOMER uses the customer operations; AGENT uses the `agent` operations. After login the SPA routes AGENT to `/agent` and CUSTOMER to `/transactions`.
          * @enum {string}
          */
         Role: "CUSTOMER" | "AGENT";
@@ -264,7 +375,7 @@ export interface components {
          * @description Stable machine-readable error code. Clients branch on this, not on HTTP text. Framework-level codes can occur on any operation and are not listed per operation: METHOD_NOT_ALLOWED (405), NOT_ACCEPTABLE (406), UNSUPPORTED_MEDIA_TYPE (415) and CLIENT_ERROR (any other 4xx). Malformed JSON and parameter type mismatches are VALIDATION_FAILED (400).
          * @enum {string}
          */
-        ProblemCode: "VALIDATION_FAILED" | "BAD_CREDENTIALS" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "TRANSACTION_NOT_ELIGIBLE" | "DISPUTE_ALREADY_EXISTS" | "INVALID_DISPUTE_TRANSITION" | "TOO_MANY_LOGIN_ATTEMPTS" | "METHOD_NOT_ALLOWED" | "NOT_ACCEPTABLE" | "UNSUPPORTED_MEDIA_TYPE" | "CLIENT_ERROR" | "INTERNAL_ERROR";
+        ProblemCode: "VALIDATION_FAILED" | "BAD_CREDENTIALS" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "TRANSACTION_NOT_ELIGIBLE" | "DISPUTE_ALREADY_EXISTS" | "INVALID_DISPUTE_TRANSITION" | "DISPUTE_MODIFIED" | "TOO_MANY_LOGIN_ATTEMPTS" | "METHOD_NOT_ALLOWED" | "NOT_ACCEPTABLE" | "UNSUPPORTED_MEDIA_TYPE" | "CLIENT_ERROR" | "INTERNAL_ERROR";
         LoginRequest: {
             /** @example thandi */
             username: string;
@@ -414,9 +525,120 @@ export interface components {
             timeline: components["schemas"]["TimelineEvent"][];
             /** @description True when the status is SUBMITTED, UNDER_REVIEW or AWAITING_CUSTOMER_INFO. */
             canWithdraw: boolean;
+            /** @description True only when the status is AWAITING_CUSTOMER_INFO (see `POST /disputes/{id}/responses`). */
+            canRespond: boolean;
         };
         DisputePage: {
             items: components["schemas"]["DisputeSummary"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            size: number;
+            /** Format: int64 */
+            totalItems: number;
+            /** Format: int32 */
+            totalPages: number;
+        };
+        CustomerResponseRequest: {
+            /**
+             * @description The customer's reply to the information request. Trimmed; must not be blank.
+             * @example The merchant's statement shows two charges of R189.00 on 24 October.
+             */
+            message: string;
+        };
+        /**
+         * @description UNASSIGNED = no agent yet; MINE = assigned to the caller; ALL = no assignment filter.
+         * @default UNASSIGNED
+         * @enum {string}
+         */
+        AgentQueue: "UNASSIGNED" | "MINE" | "ALL";
+        /**
+         * @description CLAIM when the dispute is SUBMITTED and unassigned. REQUEST_INFO and RESOLVE when it is UNDER_REVIEW and assigned to the caller.
+         * @enum {string}
+         */
+        AgentAction: "CLAIM" | "REQUEST_INFO" | "RESOLVE";
+        /**
+         * @description UPHELD moves the dispute to RESOLVED_UPHELD; DECLINED to RESOLVED_DECLINED.
+         * @enum {string}
+         */
+        ResolutionOutcome: "UPHELD" | "DECLINED";
+        RequestInfoRequest: {
+            /**
+             * @description Customer-facing question. Trimmed; must not be blank.
+             * @example Please confirm whether you have one or two StreamBox subscriptions.
+             */
+            message: string;
+        };
+        ResolveDisputeRequest: {
+            outcome: components["schemas"]["ResolutionOutcome"];
+            /**
+             * @description Shown to the customer in their timeline. Trimmed; must not be blank.
+             * @example We confirmed the duplicate charge and have reversed R189.00 to your account.
+             */
+            customerMessage: string;
+            /**
+             * @description Back-office only; never returned by customer operations. Trimmed; must not be blank.
+             * @example Merchant acquirer confirmed duplicate authorisation; chargeback raised.
+             */
+            internalNote: string;
+        };
+        AgentDisputeSummary: {
+            /** Format: uuid */
+            id: string;
+            /** @example DSP-2026-000003 */
+            reference: string;
+            status: components["schemas"]["DisputeStatus"];
+            reasonCode: components["schemas"]["ReasonCode"];
+            /** @example I was charged twice */
+            reasonLabel: string;
+            disputedAmount: components["schemas"]["MoneyAmount"];
+            currency: components["schemas"]["CurrencyCode"];
+            /** @example StreamBox Subscription */
+            merchantName: string;
+            /**
+             * @description Display name of the customer who raised the dispute.
+             * @example Thandi Mokoena
+             */
+            customerName: string;
+            /**
+             * @description Display name of the assigned agent, or null when unassigned.
+             * @example Lerato Dlamini
+             */
+            assignedAgentName: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AgentTimelineEvent: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["DisputeStatus"];
+            /** @description Null for the creation event. */
+            previousStatus: components["schemas"]["DisputeStatus"] | null;
+            actor: components["schemas"]["ActorRole"];
+            /**
+             * @description Display name of the user who acted; null for SYSTEM or when the actor is not recorded.
+             * @example Lerato Dlamini
+             */
+            actorName: string | null;
+            /** @description Customer-visible message for this step, if any. */
+            message: string | null;
+            /** @description Back-office note, if any. Never shown to customers. */
+            internalNote: string | null;
+            /** Format: date-time */
+            occurredAt: string;
+        };
+        AgentDisputeDetail: components["schemas"]["AgentDisputeSummary"] & {
+            description: string;
+            transaction: components["schemas"]["TransactionSummary"];
+            /** @description Oldest first, including internal notes. */
+            timeline: components["schemas"]["AgentTimelineEvent"][];
+            /** @description Actions the calling agent may take now. Empty when there are none. */
+            availableActions: components["schemas"]["AgentAction"][];
+        };
+        AgentDisputePage: {
+            items: components["schemas"]["AgentDisputeSummary"][];
             /** Format: int32 */
             page: number;
             /** Format: int32 */
@@ -508,7 +730,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetail"];
             };
         };
-        /** @description Missing or invalid CSRF token on an unsafe request, or the signed-in role may not call this operation. Never used to hide another customer's resource (that is 404). */
+        /** @description Missing or invalid CSRF token on an unsafe request, or the signed-in role may not call this operation (an agent calling a customer operation, or a customer calling an agent operation). Never used to hide another customer's resource (that is 404). */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -543,6 +765,15 @@ export interface components {
                  *       "code": "NOT_FOUND"
                  *     }
                  */
+                "application/problem+json": components["schemas"]["ProblemDetail"];
+            };
+        };
+        /** @description The action is not allowed now, code INVALID_DISPUTE_TRANSITION (wrong status, or for agent actions the caller is not the assigned agent); or another change won the race, code DISPUTE_MODIFIED (reload and try again). */
+        DisputeConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
                 "application/problem+json": components["schemas"]["ProblemDetail"];
             };
         };
@@ -582,6 +813,11 @@ export interface components {
          * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
          */
         DisputeId: string;
+        /**
+         * @description Dispute id. Agents can reach any dispute; an unknown id returns 404.
+         * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+         */
+        AgentDisputeId: string;
         /**
          * @description Zero-based page index.
          * @example 0
@@ -1153,7 +1389,8 @@ export interface operations {
                      *           "occurredAt": "2026-10-26T07:45:10Z"
                      *         }
                      *       ],
-                     *       "canWithdraw": true
+                     *       "canWithdraw": true,
+                     *       "canRespond": false
                      *     }
                      */
                     "application/json": components["schemas"]["DisputeDetail"];
@@ -1267,7 +1504,8 @@ export interface operations {
                      *           "occurredAt": "2026-10-25T08:05:41Z"
                      *         }
                      *       ],
-                     *       "canWithdraw": true
+                     *       "canWithdraw": true,
+                     *       "canRespond": false
                      *     }
                      */
                     "application/json": components["schemas"]["DisputeDetail"];
@@ -1351,7 +1589,8 @@ export interface operations {
                      *           "occurredAt": "2026-10-26T08:12:03Z"
                      *         }
                      *       ],
-                     *       "canWithdraw": false
+                     *       "canWithdraw": false,
+                     *       "canRespond": false
                      *     }
                      */
                     "application/json": components["schemas"]["DisputeDetail"];
@@ -1361,25 +1600,460 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The dispute is already closed (resolved or withdrawn). */
+            /** @description The dispute is already closed (resolved or withdrawn), code INVALID_DISPUTE_TRANSITION; or an agent changed it at the same moment, code DISPUTE_MODIFIED. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    respondToDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Dispute id. Another customer's dispute returns 404.
+                 * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                 */
+                id: components["parameters"]["DisputeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "message": "The merchant's statement shows two charges of R189.00 on 24 October; I only have one subscription."
+                 *     }
+                 */
+                "application/json": components["schemas"]["CustomerResponseRequest"];
+            };
+        };
+        responses: {
+            /** @description The dispute, now UNDER_REVIEW, with the reply in its timeline. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     /**
                      * @example {
-                     *       "type": "about:blank",
-                     *       "title": "Conflict",
-                     *       "status": 409,
-                     *       "detail": "A dispute in status RESOLVED_DECLINED cannot be withdrawn.",
-                     *       "instance": "/api/v1/disputes/0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f/withdraw",
-                     *       "code": "INVALID_DISPUTE_TRANSITION"
+                     *       "id": "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f",
+                     *       "reference": "DSP-2026-000003",
+                     *       "status": "UNDER_REVIEW",
+                     *       "reasonCode": "P01",
+                     *       "reasonLabel": "I was charged twice",
+                     *       "disputedAmount": "189.00",
+                     *       "currency": "ZAR",
+                     *       "merchantName": "StreamBox Subscription",
+                     *       "createdAt": "2026-10-24T12:30:00Z",
+                     *       "updatedAt": "2026-10-26T09:20:00Z",
+                     *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
+                     *       "transaction": {
+                     *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
+                     *         "reference": "TXN-20261024-000184",
+                     *         "postedAt": "2026-10-24T09:14:22Z",
+                     *         "amount": "189.00",
+                     *         "currency": "ZAR",
+                     *         "direction": "DEBIT",
+                     *         "status": "SETTLED",
+                     *         "merchantName": "StreamBox Subscription",
+                     *         "disputeStatus": "UNDER_REVIEW"
+                     *       },
+                     *       "timeline": [
+                     *         {
+                     *           "id": "4b3a2918-0f7e-4d6c-9b5a-48372615a0f9",
+                     *           "status": "SUBMITTED",
+                     *           "previousStatus": null,
+                     *           "actor": "CUSTOMER",
+                     *           "message": null,
+                     *           "occurredAt": "2026-10-24T12:30:00Z"
+                     *         },
+                     *         {
+                     *           "id": "6d5c4b3a-2918-4f7e-8d6c-5b4a39281706",
+                     *           "status": "UNDER_REVIEW",
+                     *           "previousStatus": "SUBMITTED",
+                     *           "actor": "AGENT",
+                     *           "message": null,
+                     *           "occurredAt": "2026-10-25T08:05:41Z"
+                     *         },
+                     *         {
+                     *           "id": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+                     *           "status": "AWAITING_CUSTOMER_INFO",
+                     *           "previousStatus": "UNDER_REVIEW",
+                     *           "actor": "AGENT",
+                     *           "message": "Please confirm whether you have one or two StreamBox subscriptions.",
+                     *           "occurredAt": "2026-10-25T10:15:00Z"
+                     *         },
+                     *         {
+                     *           "id": "8f7e6d5c-4b3a-4291-8a7f-7e6d5c4b3a29",
+                     *           "status": "UNDER_REVIEW",
+                     *           "previousStatus": "AWAITING_CUSTOMER_INFO",
+                     *           "actor": "CUSTOMER",
+                     *           "message": "The merchant's statement shows two charges of R189.00 on 24 October; I only have one subscription.",
+                     *           "occurredAt": "2026-10-26T09:20:00Z"
+                     *         }
+                     *       ],
+                     *       "canWithdraw": true,
+                     *       "canRespond": false
                      *     }
                      */
-                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                    "application/json": components["schemas"]["DisputeDetail"];
                 };
             };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["DisputeConflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAgentDisputes: {
+        parameters: {
+            query?: {
+                /** @example UNASSIGNED */
+                queue?: components["schemas"]["AgentQueue"];
+                /**
+                 * @description Keep only these statuses. Repeat the parameter for several.
+                 * @example [
+                 *       "SUBMITTED"
+                 *     ]
+                 */
+                status?: components["schemas"]["DisputeStatus"][];
+                /**
+                 * @description Case-insensitive "contains" match on dispute reference, merchant name or customer name.
+                 * @example mokoena
+                 */
+                q?: string;
+                /**
+                 * @description Zero-based page index.
+                 * @example 0
+                 */
+                page?: components["parameters"]["Page"];
+                /**
+                 * @description Page size. Values outside 1..100 return 400 VALIDATION_FAILED.
+                 * @example 20
+                 */
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the queue. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "id": "1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d",
+                     *           "reference": "DSP-2026-000008",
+                     *           "status": "SUBMITTED",
+                     *           "reasonCode": "P02",
+                     *           "reasonLabel": "The amount is wrong",
+                     *           "disputedAmount": "250.00",
+                     *           "currency": "ZAR",
+                     *           "merchantName": "Metro Fuel N1",
+                     *           "customerName": "Thandi Mokoena",
+                     *           "assignedAgentName": null,
+                     *           "createdAt": "2026-10-26T07:45:10Z",
+                     *           "updatedAt": "2026-10-26T07:45:10Z"
+                     *         }
+                     *       ],
+                     *       "page": 0,
+                     *       "size": 20,
+                     *       "totalItems": 1,
+                     *       "totalPages": 1
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AgentDisputePage"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgentDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Dispute id. Agents can reach any dispute; an unknown id returns 404.
+                 * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                 */
+                id: components["parameters"]["AgentDisputeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The dispute as the back office sees it. The timeline is oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDisputeDetail"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    claimDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Dispute id. Agents can reach any dispute; an unknown id returns 404.
+                 * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                 */
+                id: components["parameters"]["AgentDisputeId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The claimed dispute. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDisputeDetail"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["DisputeConflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    requestDisputeInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Dispute id. Agents can reach any dispute; an unknown id returns 404.
+                 * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                 */
+                id: components["parameters"]["AgentDisputeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "message": "Please confirm whether you have one or two StreamBox subscriptions."
+                 *     }
+                 */
+                "application/json": components["schemas"]["RequestInfoRequest"];
+            };
+        };
+        responses: {
+            /** @description The dispute, now AWAITING_CUSTOMER_INFO. `availableActions` is empty until the customer replies. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f",
+                     *       "reference": "DSP-2026-000003",
+                     *       "status": "AWAITING_CUSTOMER_INFO",
+                     *       "reasonCode": "P01",
+                     *       "reasonLabel": "I was charged twice",
+                     *       "disputedAmount": "189.00",
+                     *       "currency": "ZAR",
+                     *       "merchantName": "StreamBox Subscription",
+                     *       "customerName": "Thandi Mokoena",
+                     *       "assignedAgentName": "Lerato Dlamini",
+                     *       "createdAt": "2026-10-24T12:30:00Z",
+                     *       "updatedAt": "2026-10-25T10:15:00Z",
+                     *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
+                     *       "transaction": {
+                     *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
+                     *         "reference": "TXN-20261024-000184",
+                     *         "postedAt": "2026-10-24T09:14:22Z",
+                     *         "amount": "189.00",
+                     *         "currency": "ZAR",
+                     *         "direction": "DEBIT",
+                     *         "status": "SETTLED",
+                     *         "merchantName": "StreamBox Subscription",
+                     *         "disputeStatus": "AWAITING_CUSTOMER_INFO"
+                     *       },
+                     *       "timeline": [
+                     *         {
+                     *           "id": "4b3a2918-0f7e-4d6c-9b5a-48372615a0f9",
+                     *           "status": "SUBMITTED",
+                     *           "previousStatus": null,
+                     *           "actor": "CUSTOMER",
+                     *           "actorName": "Thandi Mokoena",
+                     *           "message": null,
+                     *           "internalNote": null,
+                     *           "occurredAt": "2026-10-24T12:30:00Z"
+                     *         },
+                     *         {
+                     *           "id": "6d5c4b3a-2918-4f7e-8d6c-5b4a39281706",
+                     *           "status": "UNDER_REVIEW",
+                     *           "previousStatus": "SUBMITTED",
+                     *           "actor": "AGENT",
+                     *           "actorName": "Lerato Dlamini",
+                     *           "message": null,
+                     *           "internalNote": null,
+                     *           "occurredAt": "2026-10-25T08:05:41Z"
+                     *         },
+                     *         {
+                     *           "id": "7e6d5c4b-3a29-4180-8f7e-6d5c4b3a2918",
+                     *           "status": "AWAITING_CUSTOMER_INFO",
+                     *           "previousStatus": "UNDER_REVIEW",
+                     *           "actor": "AGENT",
+                     *           "actorName": "Lerato Dlamini",
+                     *           "message": "Please confirm whether you have one or two StreamBox subscriptions.",
+                     *           "internalNote": null,
+                     *           "occurredAt": "2026-10-25T10:15:00Z"
+                     *         }
+                     *       ],
+                     *       "availableActions": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AgentDisputeDetail"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["DisputeConflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resolveDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Dispute id. Agents can reach any dispute; an unknown id returns 404.
+                 * @example 0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f
+                 */
+                id: components["parameters"]["AgentDisputeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "outcome": "UPHELD",
+                 *       "customerMessage": "We confirmed the duplicate charge and have reversed R189.00 to your account.",
+                 *       "internalNote": "Merchant acquirer confirmed duplicate authorisation; chargeback raised."
+                 *     }
+                 */
+                "application/json": components["schemas"]["ResolveDisputeRequest"];
+            };
+        };
+        responses: {
+            /** @description The resolved dispute. `availableActions` is empty. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f",
+                     *       "reference": "DSP-2026-000003",
+                     *       "status": "RESOLVED_UPHELD",
+                     *       "reasonCode": "P01",
+                     *       "reasonLabel": "I was charged twice",
+                     *       "disputedAmount": "189.00",
+                     *       "currency": "ZAR",
+                     *       "merchantName": "StreamBox Subscription",
+                     *       "customerName": "Thandi Mokoena",
+                     *       "assignedAgentName": "Lerato Dlamini",
+                     *       "createdAt": "2026-10-24T12:30:00Z",
+                     *       "updatedAt": "2026-10-26T10:02:00Z",
+                     *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
+                     *       "transaction": {
+                     *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
+                     *         "reference": "TXN-20261024-000184",
+                     *         "postedAt": "2026-10-24T09:14:22Z",
+                     *         "amount": "189.00",
+                     *         "currency": "ZAR",
+                     *         "direction": "DEBIT",
+                     *         "status": "SETTLED",
+                     *         "merchantName": "StreamBox Subscription",
+                     *         "disputeStatus": "RESOLVED_UPHELD"
+                     *       },
+                     *       "timeline": [
+                     *         {
+                     *           "id": "4b3a2918-0f7e-4d6c-9b5a-48372615a0f9",
+                     *           "status": "SUBMITTED",
+                     *           "previousStatus": null,
+                     *           "actor": "CUSTOMER",
+                     *           "actorName": "Thandi Mokoena",
+                     *           "message": null,
+                     *           "internalNote": null,
+                     *           "occurredAt": "2026-10-24T12:30:00Z"
+                     *         },
+                     *         {
+                     *           "id": "6d5c4b3a-2918-4f7e-8d6c-5b4a39281706",
+                     *           "status": "UNDER_REVIEW",
+                     *           "previousStatus": "SUBMITTED",
+                     *           "actor": "AGENT",
+                     *           "actorName": "Lerato Dlamini",
+                     *           "message": null,
+                     *           "internalNote": null,
+                     *           "occurredAt": "2026-10-25T08:05:41Z"
+                     *         },
+                     *         {
+                     *           "id": "2a1b0c9d-8e7f-4a6b-9c5d-4e3f2a1b0c9d",
+                     *           "status": "RESOLVED_UPHELD",
+                     *           "previousStatus": "UNDER_REVIEW",
+                     *           "actor": "AGENT",
+                     *           "actorName": "Lerato Dlamini",
+                     *           "message": "We confirmed the duplicate charge and have reversed R189.00 to your account.",
+                     *           "internalNote": "Merchant acquirer confirmed duplicate authorisation; chargeback raised.",
+                     *           "occurredAt": "2026-10-26T10:02:00Z"
+                     *         }
+                     *       ],
+                     *       "availableActions": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AgentDisputeDetail"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["DisputeConflict"];
             500: components["responses"]["InternalError"];
         };
     };

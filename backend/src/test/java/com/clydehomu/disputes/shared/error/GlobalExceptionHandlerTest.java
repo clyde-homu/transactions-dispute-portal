@@ -20,7 +20,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.test.web.servlet.MockMvc;
@@ -193,6 +195,27 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void aLostVersionCheckReturns409DisputeModifiedWithoutLeakingTheEntity() throws Exception {
+        MvcResult result = mockMvc.perform(get("/probe/stale"))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Content-Type", PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.code").value("DISPUTE_MODIFIED"))
+                .andExpect(jsonPath("$.detail").value("Someone else changed this dispute. Reload and try again."))
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("Dispute", "com.clydehomu", "version");
+    }
+
+    @Test
+    void aPlainOptimisticLockingFailureIsHandledTheSameWay() throws Exception {
+        mockMvc.perform(get("/probe/stale-plain"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DISPUTE_MODIFIED"));
+    }
+
+    @Test
     void unexpectedExceptionReturnsGeneric500WithoutLeakingDetails() throws Exception {
         MvcResult result = mockMvc.perform(get("/probe/boom"))
                 .andExpect(status().isInternalServerError())
@@ -259,6 +282,16 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/unauthenticated")
         void unauthenticated() {
             throw new BadCredentialsException("internal reason");
+        }
+
+        @GetMapping("/stale")
+        void stale() {
+            throw new ObjectOptimisticLockingFailureException(ProbeController.class, UUID.randomUUID());
+        }
+
+        @GetMapping("/stale-plain")
+        void stalePlain() {
+            throw new OptimisticLockingFailureException("update count 0");
         }
 
         @GetMapping("/boom")

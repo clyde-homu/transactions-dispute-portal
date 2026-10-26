@@ -10,7 +10,8 @@ Customers view their bank transactions, dispute them and see a history of their 
 | --- | --- |
 | View transactions | Sign in, switch between your accounts, and page through transactions filtered by date range, merchant or reference search, and "disputed only". Each transaction's detail page explains whether it can be disputed, and if not, why not (still pending, a credit, older than 120 days, or already disputed). |
 | Dispute them | A four-step form: category, specific reason, amount (the full amount or part of it) with a description, then a review with a declaration. On success you get a reference such as `DSP-2026-000123` and an explanation of what happens next. |
-| Historic view of disputes | A dispute history filterable by status and searchable by reference or merchant, and a detail page with a timeline of every status change. Open disputes can be withdrawn. |
+| Historic view of disputes | A dispute history filterable by status and searchable by reference or merchant, and a detail page with a timeline of every status change. Open disputes can be withdrawn, and when the bank asks for more information the customer replies from the same page. |
+| Beyond the brief: back office | Agents sign in to a work queue (unassigned, mine, all), claim a dispute, ask the customer for information and resolve it as upheld or declined with a message to the customer and an internal note. Internal notes and agent names never appear in customer views. |
 
 ### Screenshots
 
@@ -89,10 +90,11 @@ No `.env` file is needed: every setting has a default. To change a value, copy `
 
 The demo data is seeded at startup in both modes.
 
-| Username | Password        |
-| -------- | --------------- |
-| `thandi` | `demo-password` |
-| `pieter` | `demo-password` |
+| Username | Role     | Password        |
+| -------- | -------- | --------------- |
+| `thandi` | Customer | `demo-password` |
+| `pieter` | Customer | `demo-password` |
+| `lerato` | Agent    | `demo-password` |
 
 The password is a demo value. Set `APP_DEMO_PASSWORD` to use a different one.
 
@@ -204,7 +206,7 @@ flowchart LR
 
 The backend is a modular monolith organised by feature (`auth`, `account`, `transaction`, `dispute`, plus `shared` and `seed`). Inside each feature, `api` holds thin controllers and request/response records, `application` holds the use cases and the only `@Transactional` boundaries, `domain` holds entities and rules, and `infrastructure` holds repositories. JPA entities never leave the application layer.
 
-Every dispute status change goes through one `DisputeStateMachine`, which checks the actor's role and writes a `dispute_event` audit row in the same transaction. The full lifecycle is modelled. This release exposes the customer actions (raise and withdraw); the back-office transitions are used by the demo data and are ready for an agent-facing API.
+Every dispute status change goes through one `DisputeStateMachine`, which checks the actor's role and writes a `dispute_event` audit row in the same transaction. Customers raise, withdraw and reply through `/api/v1/disputes`; agents claim, request information and resolve through a separate `/api/v1/agent/disputes` surface (see [ADR 0006](docs/adr/0006-agent-back-office.md)). Concurrent changes by two people are caught by optimistic locking and returned as `409 DISPUTE_MODIFIED`.
 
 ```mermaid
 stateDiagram-v2
@@ -236,6 +238,7 @@ Money is a `BigDecimal` in Java, `NUMERIC(19,4)` in the database and a two-decim
 
 - **Sessions and CSRF:** an HTTP-only session cookie, with the session id changed at login. Unsafe requests must echo the `XSRF-TOKEN` cookie in an `X-XSRF-TOKEN` header, and the token rotates at login and logout. See [ADR 0004](docs/adr/0004-session-cookie-and-csrf.md) for why this beats a token in browser storage for a same-origin SPA.
 - **Ownership:** every account, transaction and dispute query is filtered by the signed-in customer inside the repository query. Someone else's resource returns 404, not 403, so its existence is not revealed. Integration tests cover this for each resource.
+- **Roles:** customer and agent endpoints are separate and each rejects the other role with 403. Only the assigned agent can request information or resolve, and internal notes are only ever serialised into agent responses.
 - **Login throttling:** five failures per username in 15 minutes locks that username (429 with `Retry-After`), counted atomically so parallel guesses can't slip through. Unknown usernames get the same response and timing as wrong passwords.
 - **Headers:** a Content Security Policy, `Referrer-Policy: no-referrer`, and Spring Security's defaults (frame denial, no-sniff). Only `health` and `info` actuator endpoints are exposed.
 - **Container:** non-root user, no secrets in the image, read-only root filesystem and no capabilities under compose.
@@ -261,9 +264,9 @@ Known trade-offs are listed in [`docs/tech-debt.md`](docs/tech-debt.md).
 
 ## What I'd do next
 
-1. **Back-office API and screens:** a dispute queue, claiming, requesting information from the customer and resolving. The state machine and audit trail already support these transitions.
-2. **Evidence uploads:** PDF and image attachments, with type checks by content, size limits, malware scanning and object storage (S3) behind a storage port.
-3. **Idempotency keys** on dispute creation and **ETag / If-Match** optimistic locking on back-office actions.
-4. **SLA tracking:** a due date per reason code, an overdue flag on the queue, and a simulated credit to the account when a dispute is upheld.
+1. **Evidence uploads:** PDF and image attachments, with type checks by content, size limits, malware scanning and object storage (S3) behind a storage port.
+2. **Idempotency keys** on dispute creation, and **ETag / If-Match** on back-office actions so the client sees conflicts before it submits rather than after.
+3. **SLA tracking:** a due date per reason code, an overdue flag and sorting on the queue, and a simulated credit to the account when a dispute is upheld.
+4. **Back office depth:** reassignment and supervisor views, four-eyes approval for large refunds, and notifications to the customer when their dispute changes.
 5. **Identity:** OIDC (for example Keycloak) instead of demo users, with step-up authentication for sensitive actions.
 6. **Operations:** metrics and tracing (Micrometer with OpenTelemetry), distributed rate limiting at the edge, and end-to-end tests in CI.

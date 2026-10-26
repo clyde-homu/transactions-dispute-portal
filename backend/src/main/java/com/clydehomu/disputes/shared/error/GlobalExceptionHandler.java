@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.context.MessageSourceResolvable;
 import org.springframework.core.MethodParameter;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -83,6 +84,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthentication(AuthenticationException ex) {
         return problem(ErrorCode.UNAUTHENTICATED, "Sign in to continue.");
+    }
+
+    /**
+     * Two people changed the same dispute at once and this one lost the version check. Nothing was written. The dispute
+     * is the only versioned entity, so the message can say so.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ProblemDetail> handleConcurrentChange(OptimisticLockingFailureException ex) {
+        return problem(ErrorCode.DISPUTE_MODIFIED, "Someone else changed this dispute. Reload and try again.");
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
