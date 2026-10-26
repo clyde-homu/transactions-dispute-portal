@@ -2,7 +2,7 @@
 
 Every line of the brief, and each production-grade expectation drawn from it, mapped to what
 implements it and what proves it. Endpoints are relative to `/api/v1` (see [`openapi.yaml`](openapi.yaml)).
-Screens are SPA routes. "Covered" means the named tests exist and pass locally (backend `verify`, frontend unit tests, and the Playwright suite against the compose stack). "At submission" items are checked on GitHub and in the final fresh-clone run.
+Screens are SPA routes. "Covered" means the named tests exist and pass locally (backend `verify`, frontend unit tests, and the Playwright suite against the compose stack). CI runs all of them except Playwright on every push.
 
 ## The brief
 
@@ -17,10 +17,11 @@ Screens are SPA routes. "Covered" means the named tests exist and pass locally (
 | B5 | "There must be a historic view of disputed transactions." | Dispute history list with status filter and search; detail with timeline; "disputed only" filter and dispute badge on transactions | `GET /disputes`, `GET /disputes/{id}`, `GET /accounts/{accountId}/transactions?disputed=true` | `/disputes`, `/disputes/:id`, `/transactions` | `DisputeControllerTest`, `DisputeLifecycleIT`, `customer-journey.spec.ts` | covered |
 | B6 | "Production-grade" | See the expectations table below | | | | |
 | B7 | "Includes a runnable Dockerfile to build and run the project." | Root multi-stage `Dockerfile`, standalone H2 mode, `compose.yaml` with PostgreSQL (ADR 0003) | `/actuator/health` | all | `StandaloneModeSmokeTest`, CI image health check | covered |
-| B8 | "Accompanied by a README that explains how to build, run, and test the project." | `README.md`: both run modes, tests, demo users, design notes, next steps | | | Fresh-clone run of both modes before submission | at submission |
+| B8 | "Accompanied by a README that explains how to build, run, and test the project." | `README.md`: both run modes, tests, demo users, design notes, next steps | | | Fresh-clone run of both modes before submission | covered |
 | B9 | "Approach it as you would a real-world problem." | Domain model from card-scheme practice: reason categories, state machine, audit trail, eligibility window (see `domain.md`); ADRs; scope decision (ADR 0005) | all | all | `DisputeStateMachineTest`, `EligibilityPolicyTest` | covered |
-| B10 | "Share the GitHub link" | Public repository, phase PRs, green CI | | | GitHub Actions workflow | at submission |
+| B10 | "Share the GitHub link" | Public repository, phase PRs, green CI | | | GitHub Actions workflow | covered |
 | B11 | "as close as possible to [Java]: Java back end" | Java 25, Spring Boot 4.1 (ADR 0001) | all | | Backend CI job | covered |
+| B12 | (real-world problem) someone has to work the disputes | Agent back office: first-in-first-out queue, claim, request information, resolve upheld or declined; customers reply to information requests (ADR 0006) | `GET /agent/disputes`, `GET /agent/disputes/{id}`, `POST /agent/disputes/{id}/claim`, `/request-info`, `/resolve`, `POST /disputes/{id}/responses` | `/agent`, `/agent/disputes/:id`, `/disputes/:id` | `DisputeStateMachineTest`, `AgentDisputeControllerTest`, `AgentDisputeServiceTest`, `AgentWorkflowIT`, `agent-journey.spec.ts` | covered |
 
 ## Production-grade expectations
 
@@ -39,11 +40,13 @@ Screens are SPA routes. "Covered" means the named tests exist and pass locally (
 | P11 | Observability and operations | Actuator health with liveness/readiness groups; config from environment variables with safe defaults; non-root container with a health check | `/actuator/health` | `StandaloneModeSmokeTest`, CI image health check | covered |
 | P12 | API documentation | `docs/openapi.yaml`, Swagger UI at `/swagger-ui.html`, spec at `/v3/api-docs`; frontend types generated from the contract | | Frontend `type-check` after `gen:api` | covered |
 | P13 | Dockerfile and compose | One root Dockerfile, two run modes, `compose.yaml` with PostgreSQL 18 | | `StandaloneModeSmokeTest`, CI image health check | covered |
-| P14 | README and decisions | README (build, run, test, demo users, next steps); ADRs 0001-0005; `domain.md` | | Fresh-clone run of both modes | at submission |
+| P14 | README and decisions | README (build, run, test, demo users, next steps); ADRs 0001-0005; `domain.md` | | Fresh-clone run of both modes | covered |
 | P15 | Accessible, responsive UI | Quasar components, labels and `aria-label`s, status as icon + text, mobile bottom tabs, loading/empty/error states | | Vitest component tests, `customer-journey.spec.ts` | covered |
-| P16 | CI | GitHub Actions: backend verify, frontend lint/type-check/test/build, image build + health check; Dependabot | | Workflow runs on every PR | at submission |
+| P16 | CI | GitHub Actions: backend verify, frontend lint/type-check/test/build, image build + health check with a demo sign-in, Playwright smoke journeys against the compose stack; Dependabot | | Workflow runs on every PR | covered |
+| P17 | Role separation and information hiding | Customer and agent APIs and routes each reject the other role with 403; only the assigned agent can request information or resolve; internal notes and agent names are never serialised into customer responses | `/disputes/**`, `/agent/disputes/**` | `AgentDisputeControllerTest`, `AgentWorkflowIT`, `agent-journey.spec.ts` (checks both the page and the API response) | covered |
+| P18 | Concurrency | Pessimistic lock on the transaction when creating a dispute; optimistic locking on disputes returns 409 `DISPUTE_MODIFIED`; two agents cannot both claim | `POST /disputes`, `/agent/disputes/{id}/claim` | `DisputeLifecycleIT` (parallel create), `AgentWorkflowIT` (claim race) | covered |
 
-## Planned test classes and specs
+## Test classes and specs
 
 | Test | Level | Covers |
 |---|---|---|
@@ -54,4 +57,10 @@ Screens are SPA routes. "Covered" means the named tests exist and pass locally (
 | `TransactionApiIT`, `DisputeLifecycleIT` (ownership 404 cases) | Acceptance (Testcontainers) | Customer A gets 404 for every customer B resource and action |
 | `DisputeLifecycleIT` | Integration (Testcontainers) | Login → create → history → withdraw → re-dispute, events persisted, reference format |
 | `StandaloneModeSmokeTest` | Integration (H2) | App starts without `DB_URL`, migrations and seeder run on H2, health is UP |
-| `customer-journey.spec.ts` | Playwright E2E | Happy path (login, transaction, dispute, history) plus a negative case (bad password) |
+| `FlywayMigrationIT` | Integration (Testcontainers) | Every migration applies on PostgreSQL 18; tables, numeric columns, sequence, constraints and indexes |
+| `AuthFlowIT` | Integration (real Tomcat) | CSRF round trip, session id rotation, login throttling with `Retry-After`, logout |
+| `AgentDisputeControllerTest` | Web slice | Agent endpoints: role checks, validation, 409 problem codes |
+| `AgentWorkflowIT` | Integration (Testcontainers) | Raise → claim → request info → customer reply → resolve, internal notes hidden from the customer, claim race, query counts |
+| `auth.spec.ts` | Playwright E2E | Bad password, sign-in, sign-out, deep-link redirect |
+| `customer-journey.spec.ts` | Playwright E2E | Raise a partial dispute, find it in the history, withdraw it; another customer gets "not found" (desktop and phone layouts) |
+| `agent-journey.spec.ts` | Playwright E2E | The full back-office journey across both roles, and each role kept out of the other's area |
