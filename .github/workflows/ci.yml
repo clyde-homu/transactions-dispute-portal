@@ -129,6 +129,36 @@ jobs:
           bash .github/scripts/wait-for-health.sh http://localhost:8080 120
           bash .github/scripts/check-app.sh http://localhost:8080
 
+      # The smoke journeys drive the real stack in a browser: sign-in, a customer dispute from
+      # raise to withdraw, and the agent back office from claim to resolve.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the end-to-end test tools
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: End-to-end smoke journeys
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:8080
+        run: npm run test:e2e:smoke
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
       - name: Compose logs
         if: failure()
         run: docker compose logs --no-color
