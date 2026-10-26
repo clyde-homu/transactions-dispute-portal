@@ -36,6 +36,20 @@ async function continueTo(page: Page, from: string, to: string): Promise<void> {
   await expect(heading(page, from)).toHaveCount(0);
 }
 
+/** A list entry: a table row on wide screens, a linked card on phones. */
+function listEntry(page: Page, text: string): Locator {
+  return page
+    .getByRole('row')
+    .filter({ hasText: text })
+    .or(page.getByRole('list').getByRole('link').filter({ hasText: text }));
+}
+
+/** Rows hold a link named after one cell; on phones the whole card is the link. */
+async function openListEntry(entry: Locator, linkName: string): Promise<void> {
+  const inner = entry.getByRole('link', { name: linkName });
+  await ((await inner.count()) > 0 ? inner : entry).click();
+}
+
 async function openFromTransactionsList(page: Page, target: DisputableTransaction): Promise<void> {
   await mainNavigation(page).getByRole('link', { name: copy.nav.transactions }).click();
 
@@ -51,9 +65,9 @@ async function openFromTransactionsList(page: Page, target: DisputableTransactio
   await expect(
     page.getByText(fill(copy.transactions.list.summary, { from: 1, to: 1, total: 1 })),
   ).toBeVisible();
-  const row = page.getByRole('row').filter({ hasText: target.reference });
-  await expect(row).toHaveCount(1);
-  await row.getByRole('link', { name: target.merchantName }).click();
+  const entry = listEntry(page, target.reference);
+  await expect(entry).toHaveCount(1);
+  await openListEntry(entry, target.merchantName);
 }
 
 test.describe('customer journey', () => {
@@ -123,12 +137,12 @@ test.describe('customer journey', () => {
         await expect(
           page.getByText(fill(copy.disputes.list.summary, { from: 1, to: 1, total: 1 })),
         ).toBeVisible();
-        const row = page.getByRole('row').filter({ hasText: reference });
-        await expect(row).toHaveCount(1);
-        await expect(row).toContainText(copy.disputeStatus.SUBMITTED);
-        await expect(row).toContainText(moneyPattern(PARTIAL_AMOUNT));
-        await expect(row).toContainText(target.merchantName);
-        await row.getByRole('link', { name: reference }).click();
+        const entry = listEntry(page, reference);
+        await expect(entry).toHaveCount(1);
+        await expect(entry).toContainText(copy.disputeStatus.SUBMITTED);
+        await expect(entry).toContainText(moneyPattern(PARTIAL_AMOUNT));
+        await expect(entry).toContainText(target.merchantName);
+        await openListEntry(entry, reference);
       });
 
       await test.step('the detail shows the partial amount and the timeline', async () => {

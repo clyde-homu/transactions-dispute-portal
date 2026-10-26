@@ -163,7 +163,7 @@ npm run test:e2e          # all journeys
 npm run test:e2e:smoke    # the @smoke subset
 ```
 
-The suite signs in, raises a partial dispute on a real transaction, finds it in the history, withdraws it, and checks that another customer gets "not found" for it. It leaves the data in a state where it can run again. Set `E2E_BASE_URL` to test a stack on another address.
+The suite runs on a desktop and a phone-sized browser. It signs in, raises a partial dispute on a real transaction, finds it in the history, withdraws it, and checks that another customer gets "not found" for it. It leaves the data in a state where it can run again. Set `E2E_BASE_URL` to test a stack on another address.
 
 ## CI
 

@@ -34,5 +34,10 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
+    // The phone layout swaps the table for cards and the drawer for bottom tabs, so the journeys
+    // run there too.
+    { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
+  ],
 });
