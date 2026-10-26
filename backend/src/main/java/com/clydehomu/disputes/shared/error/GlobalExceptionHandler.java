@@ -2,6 +2,7 @@ package com.clydehomu.disputes.shared.error;
 
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
+import java.net.URI;
 import java.util.Comparator;
 import java.util.List;
 import org.slf4j.Logger;
@@ -33,6 +34,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    // The contract lists `type` as a required member, so it is always written, even though RFC 9457 allows omitting it.
+    private static final URI ABOUT_BLANK = URI.create("about:blank");
     private static final String CODE = "code";
     private static final String ERRORS = "errors";
 
@@ -50,12 +53,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
      */
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ProblemDetail> handleAccessDenied(AccessDeniedException ex) {
-        return problem(ErrorCode.FORBIDDEN, "You do not have permission to perform this action.");
+        return problem(ErrorCode.FORBIDDEN, "You are not allowed to perform this action.");
     }
 
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthentication(AuthenticationException ex) {
-        return problem(ErrorCode.UNAUTHENTICATED, "Authentication is required to access this resource.");
+        return problem(ErrorCode.UNAUTHENTICATED, "Sign in to continue.");
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
@@ -72,7 +75,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<ProblemDetail> handleUnexpected(Exception ex) {
         // The full cause goes to the log (tagged with the request id); the client only gets a generic message.
         log.error("Unhandled exception", ex);
-        return problem(ErrorCode.INTERNAL_ERROR, "An unexpected error occurred. Please try again later.");
+        return problem(ErrorCode.INTERNAL_ERROR, "Something went wrong on our side. Please try again.");
     }
 
     @Override
@@ -103,8 +106,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> createResponseEntity(
             Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
         if (body instanceof ProblemDetail detail) {
+            detail.setType(ABOUT_BLANK);
             if (detail.getProperties() == null || !detail.getProperties().containsKey(CODE)) {
                 detail.setProperty(CODE, ErrorCode.forStatus(statusCode).name());
+            }
+            if (statusCode.value() == 404) {
+                // The parent's text names the missing static resource; the contract promises one neutral sentence.
+                detail.setDetail("The requested resource was not found.");
             }
             HttpHeaders problemHeaders = new HttpHeaders();
             problemHeaders.putAll(headers);
@@ -122,6 +130,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static ProblemDetail problemBody(ErrorCode code, String detail) {
         ProblemDetail body = ProblemDetail.forStatusAndDetail(code.status(), detail);
+        body.setType(ABOUT_BLANK);
         body.setProperty(CODE, code.name());
         return body;
     }
@@ -131,7 +140,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         List<FieldViolation> sorted = violations.stream()
                 .sorted(Comparator.comparing(FieldViolation::field).thenComparing(FieldViolation::message))
                 .toList();
-        ProblemDetail body = problemBody(ErrorCode.VALIDATION_FAILED, "The request is not valid.");
+        ProblemDetail body = problemBody(ErrorCode.VALIDATION_FAILED, "One or more fields are invalid.");
         body.setProperty(ERRORS, sorted);
         return body;
     }

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -91,6 +92,29 @@ class SecurityConfigTest {
     }
 
     @Test
+    @WithMockUser(roles = "CUSTOMER")
+    void aCustomerPassesACustomerOnlyRule() throws Exception {
+        mockMvc.perform(get("/api/v1/probe/customers-only")).andExpect(status().isOk());
+    }
+
+    @Test
+    @WithMockUser(roles = "AGENT")
+    void anAgentFailsACustomerOnlyRuleWithAProblemJson403() throws Exception {
+        mockMvc.perform(get("/api/v1/probe/customers-only"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.detail").value("You are not allowed to perform this action."));
+    }
+
+    @Test
+    void anAnonymousCallerFailsACustomerOnlyRuleWithA401() throws Exception {
+        mockMvc.perform(get("/api/v1/probe/customers-only"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    }
+
+    @Test
     void responsesCarryTheSecurityHeaders() throws Exception {
         mockMvc.perform(get("/api/v1/probe"))
                 .andExpect(header().string(
@@ -106,6 +130,12 @@ class SecurityConfigTest {
 
         @GetMapping("/api/v1/probe")
         String read() {
+            return "ok";
+        }
+
+        @GetMapping("/api/v1/probe/customers-only")
+        @PreAuthorize("hasRole('CUSTOMER')")
+        String customersOnly() {
             return "ok";
         }
 

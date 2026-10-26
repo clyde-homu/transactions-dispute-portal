@@ -54,6 +54,8 @@ class GlobalExceptionHandlerTest {
                 .andExpect(header().string("Content-Type", PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.detail").value("One or more fields are invalid."))
                 .andExpect(jsonPath("$.errors.length()").value(2))
                 .andExpect(jsonPath("$.errors[0].field").value("name"))
                 .andExpect(jsonPath("$.errors[0].message").isNotEmpty())
@@ -128,7 +130,8 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/probe/does-not-exist"))
                 .andExpect(status().isNotFound())
                 .andExpect(header().string("Content-Type", PROBLEM_JSON))
-                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.detail").value("The requested resource was not found."));
     }
 
     @Test
@@ -150,14 +153,16 @@ class GlobalExceptionHandlerTest {
     void accessDeniedFromMethodSecurityReturns403NotAServerError() throws Exception {
         mockMvc.perform(get("/probe/denied"))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.detail").value("You are not allowed to perform this action."));
     }
 
     @Test
     void authenticationFailureReturns401() throws Exception {
         mockMvc.perform(get("/probe/unauthenticated"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.detail").value("Sign in to continue."));
     }
 
     @Test
@@ -166,6 +171,8 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isInternalServerError())
                 .andExpect(header().string("Content-Type", PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(500))
+                .andExpect(jsonPath("$.type").value("about:blank"))
+                .andExpect(jsonPath("$.detail").value("Something went wrong on our side. Please try again."))
                 .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
                 .andReturn();
 
