@@ -1,0 +1,24 @@
+# Allow-list: the image build reads only these paths, so nothing else (history, env files, docs, editor state)
+# is ever sent to the daemon or can end up in a layer.
+*
+!backend/mvnw
+!backend/.mvn/
+!backend/pom.xml
+!backend/src/
+!frontend/
+
+# Local build output and tooling state inside the allowed paths. The image installs and builds its own.
+**/node_modules
+**/target
+**/dist
+**/.quasar
+**/coverage
+**/playwright-report
+**/test-results
+**/.git
+**/.env*
+**/.idea
+**/.vscode
+**/*.iml
+**/*.log
+**/.DS_Store

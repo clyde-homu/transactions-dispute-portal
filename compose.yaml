@@ -1,0 +1,51 @@
+# Full stack: the application image plus PostgreSQL.
+# Every variable has a default, so `docker compose up --build` works without creating a .env file.
+name: dispute-portal
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: disputes
+      POSTGRES_USER: ${DB_USERNAME:-disputes}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-disputes}
+    volumes:
+      # PostgreSQL 18 images keep the cluster in a versioned directory below /var/lib/postgresql,
+      # so the volume must be mounted there and not at .../data.
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      # Expanded inside the container, so the credentials are not repeated here.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # No "ports": only the application, on the compose network, can reach the database.
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/disputes
+      DB_USERNAME: ${DB_USERNAME:-disputes}
+      DB_PASSWORD: ${DB_PASSWORD:-disputes}
+      APP_SEED_ENABLED: ${APP_SEED_ENABLED:-true}
+      APP_DEMO_PASSWORD: ${APP_DEMO_PASSWORD:-demo-password}
+      APP_DISPUTE_WINDOW_DAYS: ${APP_DISPUTE_WINDOW_DAYS:-120}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    # The application only writes to /tmp, so everything else can be read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  db-data:
