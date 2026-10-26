@@ -17,12 +17,12 @@ class FlywayMigrationIT extends PostgresIntegrationSupport {
     private JdbcTemplate jdbc;
 
     @Test
-    void flywayAppliedBothMigrationsOnPostgres() {
+    void flywayAppliedEveryMigrationOnPostgres() {
         List<String> applied = jdbc.queryForList(
                 "select version from flyway_schema_history where success and version is not null order by installed_rank",
                 String.class);
 
-        assertThat(applied).containsExactly("1", "2");
+        assertThat(applied).containsExactly("1", "2", "3");
     }
 
     @Test

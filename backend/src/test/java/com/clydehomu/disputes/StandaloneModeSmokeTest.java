@@ -104,7 +104,7 @@ class StandaloneModeSmokeTest {
     }
 
     @Test
-    void flywayAppliedBothMigrations() {
+    void flywayAppliedEveryMigration() {
         List<String> applied = jdbc.queryForList(
                 "select version from flyway_schema_history where success = true and version is not null order by installed_rank",
                 String.class);
@@ -113,7 +113,7 @@ class StandaloneModeSmokeTest {
                         + "('app_user', 'account', 'bank_transaction', 'dispute', 'dispute_event')",
                 Integer.class);
 
-        assertThat(applied).containsExactly("1", "2");
+        assertThat(applied).containsExactly("1", "2", "3");
         assertThat(tables).isEqualTo(5);
     }
 
