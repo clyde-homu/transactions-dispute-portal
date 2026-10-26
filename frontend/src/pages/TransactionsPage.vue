@@ -243,6 +243,7 @@ function onRowClick(event: Event, row: TransactionSummary): void {
           <div class="col-12 col-sm">
             <q-input
               v-model="searchText"
+              :maxlength="100"
               outlined
               dense
               clearable

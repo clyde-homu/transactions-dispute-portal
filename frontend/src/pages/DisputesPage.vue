@@ -144,6 +144,7 @@ function onRowClick(event: Event, row: DisputeSummary): void {
       </div>
       <q-input
         v-model="searchText"
+        :maxlength="100"
         outlined
         dense
         clearable
