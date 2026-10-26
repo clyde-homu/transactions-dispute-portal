@@ -44,6 +44,7 @@ class FlywayMigrationIT extends PostgresIntegrationSupport {
                         "ix_dispute_customer_created",
                         "ix_dispute_transaction",
                         "ix_dispute_status_created",
+                        "ix_dispute_assigned_agent",
                         "ix_dispute_event_dispute_created");
     }
 
