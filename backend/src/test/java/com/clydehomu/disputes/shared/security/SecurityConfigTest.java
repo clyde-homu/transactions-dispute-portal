@@ -2,6 +2,7 @@ package com.clydehomu.disputes.shared.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,6 +35,15 @@ class SecurityConfigTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("Content-Type", "application/problem+json"))
                 .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    }
+
+    @Test
+    void anonymousHeadOnAnApiPathIsStillAProblemJson401() throws Exception {
+        // HEAD /** is open for the SPA shell; this pins that the /api/** rule is evaluated first and wins.
+        mockMvc.perform(head("/api/v1/accounts"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Content-Type", "application/problem+json"))
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
     }
 

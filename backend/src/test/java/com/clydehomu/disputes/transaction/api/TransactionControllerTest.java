@@ -151,11 +151,21 @@ class TransactionControllerTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void pageOneHundredThousandIsTheLargestAllowedPage() throws Exception {
+        when(service.list(any(), any(), any())).thenReturn(new PageImpl<>(List.of(), PageRequest.of(100_000, 20), 0));
+
+        mockMvc.perform(get(LIST_PATH).param("page", "100000").with(user(customer)))
+                .andExpect(status().isOk());
+    }
+
     // ---- list: validation ----
 
     @ParameterizedTest(name = "{0}={1} is rejected on field {0}")
     @CsvSource({
         "page, -1",
+        "page, 100001",
+        "page, 30000000",
         "page, abc",
         "size, 0",
         "size, 101",

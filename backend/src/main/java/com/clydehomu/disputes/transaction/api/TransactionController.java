@@ -37,7 +37,8 @@ public class TransactionController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(name = "q", required = false) @Size(min = 1, max = 100) String text,
             @RequestParam(required = false) Boolean disputed,
-            @RequestParam(defaultValue = "0") @Min(0) int page,
+            // The upper bound keeps page * size inside an int: a huge page would overflow the offset and fail as a 500.
+            @RequestParam(defaultValue = "0") @Min(0) @Max(100_000) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         TransactionQuery query = new TransactionQuery(from, to, text, Boolean.TRUE.equals(disputed), page, size);
         return PageResponse.of(transactions.list(user.getId(), accountId, query), TransactionSummaryResponse::from);
