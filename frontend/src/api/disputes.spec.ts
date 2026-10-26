@@ -3,7 +3,13 @@ import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { api } from './client';
-import { createDispute, getDispute, listDisputes, withdrawDispute } from './disputes';
+import {
+  createDispute,
+  getDispute,
+  listDisputes,
+  respondToDispute,
+  withdrawDispute,
+} from './disputes';
 
 let requests: InternalAxiosRequestConfig[] = [];
 const originalAdapter = api.defaults.adapter;
@@ -65,5 +71,14 @@ describe('disputes API', () => {
     await withdrawDispute('abc');
     expect(requests.at(-1)?.method).toBe('post');
     expect(requests.at(-1)?.url).toBe('/disputes/abc/withdraw');
+  });
+
+  it('posts the customer reply to the dispute, with the id encoded', async () => {
+    await respondToDispute('a b', { message: 'Only one subscription.' });
+
+    const request = requests.at(-1);
+    expect(request?.method).toBe('post');
+    expect(request?.url).toBe('/disputes/a%20b/responses');
+    expect(JSON.parse(String(request?.data))).toEqual({ message: 'Only one subscription.' });
   });
 });

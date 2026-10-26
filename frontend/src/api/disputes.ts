@@ -1,6 +1,7 @@
 import { api } from './client';
 import type {
   CreateDisputeRequest,
+  CustomerResponseRequest,
   DisputeDetail,
   DisputePage,
   DisputeStatus,
@@ -71,5 +72,21 @@ export async function getDispute(id: string, signal?: AbortSignal): Promise<Disp
 /** Rejects with 409 INVALID_DISPUTE_TRANSITION when the dispute is already closed. */
 export async function withdrawDispute(id: string): Promise<DisputeDetail> {
   const { data } = await api.post<DisputeDetail>(`/disputes/${encodeURIComponent(id)}/withdraw`);
+  return data;
+}
+
+/**
+ * Replies to the agent's information request. Rejects with 409 INVALID_DISPUTE_TRANSITION when
+ * the dispute is no longer waiting for the customer, or DISPUTE_MODIFIED when it changed at the
+ * same moment, and with 400 and field errors for a blank or over-long message.
+ */
+export async function respondToDispute(
+  id: string,
+  request: CustomerResponseRequest,
+): Promise<DisputeDetail> {
+  const { data } = await api.post<DisputeDetail>(
+    `/disputes/${encodeURIComponent(id)}/responses`,
+    request,
+  );
   return data;
 }

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 
-import { getDispute, withdrawDispute } from '@/api/disputes';
+import { getDispute, respondToDispute, withdrawDispute } from '@/api/disputes';
 import type { DisputeDetail } from '@/api/types';
 import { apiError } from '@/test/api-helpers';
 import {
@@ -62,6 +62,7 @@ const DISPUTE: DisputeDetail = {
     },
   ],
   canWithdraw: true,
+  canRespond: false,
 };
 
 const WITHDRAWN: DisputeDetail = {
@@ -87,6 +88,43 @@ const DECLINED: DisputeDetail = {
   ...DISPUTE,
   status: 'RESOLVED_DECLINED',
   canWithdraw: false,
+};
+
+// The agent asked for more information, so the customer can reply.
+const AWAITING: DisputeDetail = {
+  ...DISPUTE,
+  status: 'AWAITING_CUSTOMER_INFO',
+  transaction: { ...DISPUTE.transaction, disputeStatus: 'AWAITING_CUSTOMER_INFO' },
+  timeline: [
+    ...DISPUTE.timeline,
+    {
+      id: 't3',
+      status: 'AWAITING_CUSTOMER_INFO',
+      previousStatus: 'UNDER_REVIEW',
+      actor: 'AGENT',
+      message: 'Please confirm whether you have one or two StreamBox subscriptions.',
+      occurredAt: '2026-10-25T10:15:00Z',
+    },
+  ],
+  canRespond: true,
+};
+
+const REPLIED: DisputeDetail = {
+  ...AWAITING,
+  status: 'UNDER_REVIEW',
+  transaction: { ...DISPUTE.transaction, disputeStatus: 'UNDER_REVIEW' },
+  timeline: [
+    ...AWAITING.timeline,
+    {
+      id: 't4',
+      status: 'UNDER_REVIEW',
+      previousStatus: 'AWAITING_CUSTOMER_INFO',
+      actor: 'CUSTOMER',
+      message: 'I only have one subscription.',
+      occurredAt: '2026-10-26T09:20:00Z',
+    },
+  ],
+  canRespond: false,
 };
 
 let wrapper: VueWrapper;
@@ -228,6 +266,108 @@ describe('DisputeDetailPage', () => {
       expect(wrapper.get('[data-testid="timeline-message"]').text()).toBe(
         'We are looking into the duplicate charge with the merchant.',
       );
+    });
+  });
+
+  describe('replying to the disputes team', () => {
+    const reply = async (text: string) => {
+      await wrapper.get('[data-testid="reply-message"]').setValue(text);
+      await wrapper.get('[data-testid="reply-section"] form').trigger('submit');
+      await settle();
+    };
+
+    it('offers no reply section or banner unless the server says the customer can respond', async () => {
+      await mountPage();
+
+      expect(wrapper.find('[data-testid="reply-section"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="reply-banner"]').exists()).toBe(false);
+    });
+
+    it('shows a labelled reply section under the summary and above the timeline', async () => {
+      vi.mocked(getDispute).mockResolvedValue(AWAITING);
+      await mountPage();
+
+      const section = wrapper.get('[data-testid="reply-section"]');
+      expect(section.get('h2').text()).toBe('Reply to the disputes team');
+      expect(section.get('[data-testid="reply-question"]').text()).toContain(
+        'Please confirm whether you have one or two StreamBox subscriptions.',
+      );
+      const headings = wrapper.findAll('h2').map((heading) => heading.text());
+      expect(headings.indexOf('Reply to the disputes team')).toBeGreaterThan(
+        headings.indexOf('DSP-2026-000003'),
+      );
+      expect(headings.indexOf('Reply to the disputes team')).toBeLessThan(
+        headings.indexOf('Progress'),
+      );
+      expect(wrapper.get('[data-testid="status"]').text()).toContain('Action needed');
+    });
+
+    it('points an "Action needed" dispute to the reply box with a banner', async () => {
+      vi.mocked(getDispute).mockResolvedValue(AWAITING);
+      await mountPage();
+
+      const banner = wrapper.get('[data-testid="reply-banner"]');
+      expect(banner.text()).toContain('Action needed');
+
+      await click('reply-banner-action');
+
+      expect(document.activeElement).toBe(wrapper.get('[data-testid="reply-message"]').element);
+    });
+
+    it('applies the returned dispute, tells the customer and moves focus to the heading', async () => {
+      vi.mocked(getDispute).mockResolvedValue(AWAITING);
+      vi.mocked(respondToDispute).mockResolvedValue(REPLIED);
+      await mountPage();
+
+      await reply('I only have one subscription.');
+
+      expect(respondToDispute).toHaveBeenCalledWith(DISPUTE.id, {
+        message: 'I only have one subscription.',
+      });
+      expect(Notify.create).toHaveBeenCalledWith({
+        type: 'positive',
+        message: 'Your reply has been sent to the disputes team.',
+      });
+      expect(wrapper.get('[data-testid="status"]').text()).toContain('In review');
+      expect(wrapper.find('[data-testid="reply-section"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="reply-banner"]').exists()).toBe(false);
+      expect(wrapper.findAll('[data-testid="timeline-entry"]')).toHaveLength(4);
+      expect(getDispute).toHaveBeenCalledTimes(1);
+      expect(document.activeElement?.id).toBe('dispute-heading');
+    });
+
+    it('warns and reloads the dispute when it changed in the meantime', async () => {
+      vi.mocked(getDispute).mockResolvedValue(AWAITING);
+      vi.mocked(respondToDispute).mockRejectedValue(apiError(409, 'DISPUTE_MODIFIED'));
+      await mountPage();
+      vi.mocked(getDispute).mockResolvedValue(WITHDRAWN);
+
+      await reply('I only have one subscription.');
+
+      expect(Notify.create).toHaveBeenCalledWith({
+        type: 'warning',
+        message:
+          'This dispute changed while you were writing. We have refreshed it, so please check it and send your reply again.',
+      });
+      expect(getDispute).toHaveBeenCalledTimes(2);
+      expect(wrapper.get('[data-testid="status"]').text()).toContain('Withdrawn');
+      expect(wrapper.find('[data-testid="reply-section"]').exists()).toBe(false);
+    });
+
+    it('reloads when the dispute is no longer waiting for a reply', async () => {
+      vi.mocked(getDispute).mockResolvedValue(AWAITING);
+      vi.mocked(respondToDispute).mockRejectedValue(apiError(409, 'INVALID_DISPUTE_TRANSITION'));
+      await mountPage();
+      vi.mocked(getDispute).mockResolvedValue(DECLINED);
+
+      await reply('I only have one subscription.');
+
+      expect(Notify.create).toHaveBeenCalledWith({
+        type: 'warning',
+        message: 'This dispute is no longer waiting for your reply. We have refreshed it.',
+      });
+      expect(getDispute).toHaveBeenCalledTimes(2);
+      expect(wrapper.get('[data-testid="status"]').text()).toContain('Declined');
     });
   });
 

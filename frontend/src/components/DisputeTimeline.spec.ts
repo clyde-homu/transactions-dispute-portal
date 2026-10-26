@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 
-import type { TimelineEvent } from '@/api/types';
+import type { AgentTimelineEvent, TimelineEvent } from '@/api/types';
 import { createTestI18n, quasarPlugin } from '@/test/vue-helpers';
 
 import DisputeTimeline from './DisputeTimeline.vue';
@@ -115,5 +115,94 @@ describe('DisputeTimeline', () => {
 
     expect(wrapper.findAll('[data-testid="timeline-entry"]')).toHaveLength(1);
     expect(wrapper.find('[data-testid="timeline-message"]').exists()).toBe(false);
+  });
+
+  describe('the agent variant', () => {
+    const AGENT_EVENTS: AgentTimelineEvent[] = [
+      { ...FIRST, actorName: 'Thandi Mokoena', internalNote: null },
+      {
+        id: '2',
+        status: 'AWAITING_CUSTOMER_INFO',
+        previousStatus: 'UNDER_REVIEW',
+        actor: 'AGENT',
+        actorName: 'Lerato Dlamini',
+        message: 'Please confirm the number of subscriptions.',
+        internalNote: null,
+        occurredAt: '2026-10-25T10:15:00Z',
+      },
+      {
+        id: '3',
+        status: 'RESOLVED_UPHELD',
+        previousStatus: 'UNDER_REVIEW',
+        actor: 'AGENT',
+        actorName: 'Lerato Dlamini',
+        message: 'We reversed the duplicate charge.',
+        internalNote: 'Acquirer confirmed the duplicate authorisation.',
+        occurredAt: '2026-10-26T10:02:00Z',
+      },
+      {
+        id: '4',
+        status: 'WITHDRAWN',
+        previousStatus: 'UNDER_REVIEW',
+        actor: 'SYSTEM',
+        actorName: null,
+        message: null,
+        internalNote: null,
+        occurredAt: '2026-10-26T11:00:00Z',
+      },
+    ];
+
+    function mountAgentTimeline() {
+      return mount(DisputeTimeline, {
+        props: { events: AGENT_EVENTS, variant: 'agent' },
+        global: { plugins: [quasarPlugin, createTestI18n()] },
+      });
+    }
+
+    it('names who acted, falling back to the role when no name was recorded', () => {
+      const actors = mountAgentTimeline()
+        .findAll('[data-testid="timeline-actor"]')
+        .map((actor) => actor.text());
+
+      expect(actors).toEqual([
+        'By Thandi Mokoena (Customer)',
+        'By Lerato Dlamini (Agent)',
+        'By Lerato Dlamini (Agent)',
+        'By System',
+      ]);
+    });
+
+    it('marks an internal note with a label and a lock, apart from the customer message', () => {
+      const wrapper = mountAgentTimeline();
+
+      const notes = wrapper.findAll('[data-testid="timeline-internal-note"]');
+      expect(notes).toHaveLength(1);
+      expect(notes[0]?.text()).toContain('Internal note');
+      expect(notes[0]?.text()).toContain('Only the back office can see this.');
+      expect(notes[0]?.text()).toContain('Acquirer confirmed the duplicate authorisation.');
+      expect(notes[0]?.get('.q-icon').text()).toBe('lock');
+      expect(wrapper.findAll('[data-testid="timeline-message"]').map((m) => m.text())).toEqual([
+        'Please confirm the number of subscriptions.',
+        'We reversed the duplicate charge.',
+      ]);
+    });
+
+    it('uses the status words of the back office', () => {
+      const titles = mountAgentTimeline()
+        .findAll('.q-timeline__title')
+        .map((title) => title.text());
+
+      expect(titles).toEqual(['Submitted', 'Waiting for customer', 'Upheld', 'Withdrawn']);
+    });
+
+    it('never shows a note in the customer view, even if one is passed in', () => {
+      const wrapper = mount(DisputeTimeline, {
+        props: { events: AGENT_EVENTS },
+        global: { plugins: [quasarPlugin, createTestI18n()] },
+      });
+
+      expect(wrapper.find('[data-testid="timeline-internal-note"]').exists()).toBe(false);
+      expect(wrapper.text()).not.toContain('Acquirer confirmed');
+    });
   });
 });
