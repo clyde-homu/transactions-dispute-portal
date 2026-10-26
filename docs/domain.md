@@ -158,6 +158,8 @@ Timestamps are `timestamp with time zone`, written in UTC.
 | `available_balance` | `numeric(19,4)` | not null |
 | `created_at` | `timestamp with time zone` | not null |
 
+Index `ix_account_owner` on `owner_id` serves "my accounts" and the ownership check on transaction queries.
+
 ### `bank_transaction`
 | Column | Type | Constraints |
 |---|---|---|
@@ -210,6 +212,7 @@ Append-only: rows are never updated or deleted. The API maps them to `TimelineEv
 
 ### Sequence and indexes
 - `create sequence dispute_reference_seq start with 1`
+- `ix_account_owner` on `account (owner_id)`: "my accounts" and ownership checks.
 - `bank_transaction (account_id, posted_at desc)`: the transaction list.
 - `dispute (customer_id, created_at desc)`: the dispute history.
 - `dispute (transaction_id)`: eligibility rule 4 and `disputeStatus` on transactions.
@@ -305,7 +308,33 @@ erDiagram
   operation.
 - `OwnershipAcceptanceTest` proves this for every customer endpoint with two seeded customers.
 
-## 10. Assumptions
+## 10. Error codes
+
+Every 4xx/5xx is an RFC 9457 problem (`application/problem+json`) with a stable `code`. Clients
+branch on `code`, never on `title` or `detail`.
+
+| Code | HTTP | When |
+|---|---|---|
+| `VALIDATION_FAILED` | 400 | Bean Validation failure (with `errors[]`), malformed JSON, or a parameter type mismatch (for example a path id that is not a UUID) |
+| `BAD_CREDENTIALS` | 401 | Wrong username or password on login |
+| `UNAUTHENTICATED` | 401 | No valid session |
+| `FORBIDDEN` | 403 | Missing or invalid CSRF token, or a role that may not call the operation |
+| `NOT_FOUND` | 404 | Resource does not exist or belongs to another customer |
+| `METHOD_NOT_ALLOWED` | 405 | HTTP method not supported on the path |
+| `NOT_ACCEPTABLE` | 406 | `Accept` header asks for a media type the API cannot produce |
+| `DISPUTE_ALREADY_EXISTS` | 409 | Transaction already has a non-withdrawn dispute |
+| `INVALID_DISPUTE_TRANSITION` | 409 | State machine rejects the transition (for example withdrawing a closed dispute) |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | Request body is not `application/json` |
+| `TRANSACTION_NOT_ELIGIBLE` | 422 | Transaction is a credit, pending, or older than the dispute window |
+| `TOO_MANY_LOGIN_ATTEMPTS` | 429 | Five failed logins for the username within 15 minutes |
+| `CLIENT_ERROR` | other 4xx | Any other client error the framework raises |
+| `INTERNAL_ERROR` | 500 | Unexpected failure; no stack traces, SQL or class names exposed |
+
+The framework-level codes (`METHOD_NOT_ALLOWED`, `NOT_ACCEPTABLE`, `UNSUPPORTED_MEDIA_TYPE`,
+`CLIENT_ERROR`) can occur on any operation, so `openapi.yaml` lists them once in the `ProblemCode`
+enum rather than on every operation.
+
+## 11. Assumptions
 
 1. The session cookie is Spring's default `JSESSIONID`; the CSRF cookie is `XSRF-TOKEN`, readable by
    JavaScript, and rotated on login and logout.

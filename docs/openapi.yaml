@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Dispute Portal API
-  version: 1.0.0
+  version: 1.1.0
   summary: Customers view their bank transactions, dispute them and follow their dispute history.
   description: |
     REST API behind the Dispute Portal single-page app. The SPA and the API are served from the
@@ -942,7 +942,12 @@ components:
       enum: [F01, F02, A01, P01, P02, C01, C02, C03]
     ProblemCode:
       type: string
-      description: Stable machine-readable error code. Clients branch on this, not on HTTP text.
+      description: >-
+        Stable machine-readable error code. Clients branch on this, not on HTTP text.
+        Framework-level codes can occur on any operation and are not listed per operation:
+        METHOD_NOT_ALLOWED (405), NOT_ACCEPTABLE (406), UNSUPPORTED_MEDIA_TYPE (415) and
+        CLIENT_ERROR (any other 4xx). Malformed JSON and parameter type mismatches are
+        VALIDATION_FAILED (400).
       enum:
         - VALIDATION_FAILED
         - BAD_CREDENTIALS
@@ -953,6 +958,10 @@ components:
         - DISPUTE_ALREADY_EXISTS
         - INVALID_DISPUTE_TRANSITION
         - TOO_MANY_LOGIN_ATTEMPTS
+        - METHOD_NOT_ALLOWED
+        - NOT_ACCEPTABLE
+        - UNSUPPORTED_MEDIA_TYPE
+        - CLIENT_ERROR
         - INTERNAL_ERROR
 
     # ---------- auth ----------
