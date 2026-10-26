@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
-import { copy } from './copy';
+import { copy, escapeRegExp } from './copy';
 import type { DemoUser } from './env';
 
 // The demo seeder runs just after the server starts accepting requests, so for the first seconds
@@ -63,11 +63,11 @@ export async function signIn(page: Page, user: DemoUser): Promise<void> {
   }
 }
 
-/** Opens the sign-in page and signs in. */
+/** Opens the sign-in page, signs in, and checks the app opened the home of the user's role. */
 export async function login(page: Page, user: DemoUser): Promise<void> {
   await page.goto('/login');
   await signIn(page, user);
-  await expect(page).toHaveURL(/\/transactions/);
+  await expect(page).toHaveURL(new RegExp(`${escapeRegExp(user.home)}(\\?|$)`));
 }
 
 export async function signOut(page: Page): Promise<void> {
