@@ -1,19 +1,27 @@
 # Dispute Portal: domain model
 
-This is the domain reference for the first release. The API contract is in [`openapi.yaml`](openapi.yaml),
-decisions are in [`adr/`](adr/README.md), and the brief-to-test mapping is in [`traceability.md`](traceability.md).
+This is the domain reference for the customer journey and the agent back office (API version 1.2.0).
+The API contract is in [`openapi.yaml`](openapi.yaml), decisions are in [`adr/`](adr/README.md), and
+the brief-to-test mapping is in [`traceability.md`](traceability.md).
 
 ## 1. Roles
 
-| Role | Active in this version | Can do |
-|---|---|---|
-| `CUSTOMER` | Yes | Sign in, view own accounts and transactions, raise disputes on own transactions, view own dispute history, withdraw own open disputes. |
-| `AGENT` | No (model only) | Reserved for the back office: claim, request information, resolve. The role value, the `AGENT` actor and the state machine transitions exist, but no agent users are seeded and no agent endpoints are exposed. |
-| `SYSTEM` | Actor only | Not a login role. Reserved as a timeline actor for automated transitions (none in this version). |
+| Role | Active | Can do | SPA home after login |
+|---|---|---|---|
+| `CUSTOMER` | Yes | Sign in, view own accounts and transactions, raise disputes on own transactions, view own dispute history, withdraw own open disputes, reply to information requests. | `/transactions` |
+| `AGENT` | Yes | Work the dispute queue under `/agent/disputes`: see every dispute, claim, request information, resolve upheld or declined. Cannot call customer operations or create disputes. | `/agent` |
+| `SYSTEM` | Actor only | Not a login role. Reserved as a timeline actor for automated transitions (none yet). | |
 
-Seeded customers: `thandi` (Thandi Mokoena: Everyday cheque account and credit card) and `pieter`
-(Pieter van der Merwe: one cheque account). The demo password comes from `APP_DEMO_PASSWORD`
-(default `demo-password`, a documented demo value) and is BCrypt-hashed at startup.
+Role separation is enforced on the URL: `/api/v1/agent/**` requires `AGENT`; the customer
+operations (`/accounts/**`, `/transactions/**`, `/disputes/**`) require `CUSTOMER`. The wrong role
+gets `403 FORBIDDEN`. `/auth/**` and `GET /dispute-reasons` are open to both roles. The SPA reads
+`Me.role` after login and routes accordingly; its route guards mirror the server rules but are not
+the security boundary.
+
+Seeded users: customers `thandi` (Thandi Mokoena: Everyday cheque account and credit card) and
+`pieter` (Pieter van der Merwe: one cheque account), and agent `lerato` (Lerato Dlamini, role
+`AGENT`). All three share the demo password from `APP_DEMO_PASSWORD` (default `demo-password`, a
+documented demo value), BCrypt-hashed at startup.
 
 ## 2. Dispute statuses
 
@@ -35,23 +43,33 @@ current status and the actor's role, then writes a `dispute_event` row in the sa
 transaction as the status change. Any transition not in this table is rejected with
 `409 INVALID_DISPUTE_TRANSITION`.
 
-| From | Event | To | Actor | Guard | Exposed in API now |
+| From | Event | To | Actor | Guard | Exposed in API |
 |---|---|---|---|---|---|
 | (none) | `create` | `SUBMITTED` | CUSTOMER (owner) | Transaction is eligible (section 4); request is valid | Yes, `POST /disputes` |
-| `SUBMITTED` | `claim` | `UNDER_REVIEW` | AGENT | Dispute is unassigned | No (seeder only) |
-| `UNDER_REVIEW` | `request_info` | `AWAITING_CUSTOMER_INFO` | AGENT (assigned) | Message to the customer is required | No (seeder only) |
-| `AWAITING_CUSTOMER_INFO` | `customer_respond` | `UNDER_REVIEW` | CUSTOMER (owner) | Response text is required | No (seeder only) |
-| `UNDER_REVIEW` | `resolve_upheld` | `RESOLVED_UPHELD` | AGENT (assigned) | Message to the customer is required | No (seeder only) |
-| `UNDER_REVIEW` | `resolve_declined` | `RESOLVED_DECLINED` | AGENT (assigned) | Message to the customer is required | No (seeder only) |
+| `SUBMITTED` | `claim` | `UNDER_REVIEW` | AGENT | Dispute is unassigned; sets `assigned_agent_id` to the caller | Yes, `POST /agent/disputes/{id}/claim` |
+| `UNDER_REVIEW` | `request_info` | `AWAITING_CUSTOMER_INFO` | AGENT (assigned) | Customer-facing message, 1-1000 characters | Yes, `POST /agent/disputes/{id}/request-info` |
+| `AWAITING_CUSTOMER_INFO` | `customer_respond` | `UNDER_REVIEW` | CUSTOMER (owner) | Reply text, 1-1000 characters | Yes, `POST /disputes/{id}/responses` |
+| `UNDER_REVIEW` | `resolve_upheld` | `RESOLVED_UPHELD` | AGENT (assigned) | Customer message and internal note, each 1-1000 characters | Yes, `POST /agent/disputes/{id}/resolve` (`outcome: UPHELD`) |
+| `UNDER_REVIEW` | `resolve_declined` | `RESOLVED_DECLINED` | AGENT (assigned) | Customer message and internal note, each 1-1000 characters | Yes, `POST /agent/disputes/{id}/resolve` (`outcome: DECLINED`) |
 | `SUBMITTED`, `UNDER_REVIEW`, `AWAITING_CUSTOMER_INFO` | `withdraw` | `WITHDRAWN` | CUSTOMER (owner) | None | Yes, `POST /disputes/{id}/withdraw` |
 
 Notes:
-- Assignment is not stored in this version (no `assigned_agent_id` column), so the "unassigned" and
-  "assigned" guards reduce to "actor role is AGENT". The column arrives with the back office.
+- "Assigned" means `dispute.assigned_agent_id` equals the calling agent. A different agent, or a
+  wrong status, gets `409 INVALID_DISPUTE_TRANSITION`.
+- Assignment is kept after `request_info`, `customer_respond` and resolution, so the same agent
+  picks the dispute up again after the customer replies, and the history shows who decided it.
+  Reassignment is not supported in this version.
 - `updated_at` changes on every transition. `resolved_at` is set when the dispute enters a closed status.
-- The seeder drives demo disputes through these transitions with actor role `AGENT` and a null
-  actor id, so the timelines are realistic without any agent users.
-- `canWithdraw` in the API is true exactly when the status is open.
+- Each transition increments `dispute.version` (JPA `@Version`). If two changes race, the loser
+  gets `409 DISPUTE_MODIFIED` ("Someone else changed this dispute. Reload and try again.") and
+  nothing is written. This applies to customer actions (withdraw, respond) as well as agent actions.
+- Derived flags: `canWithdraw` is true when the status is open; `canRespond` is true only in
+  `AWAITING_CUSTOMER_INFO`. `availableActions` (agent view) is `CLAIM` when `SUBMITTED` and
+  unassigned, `REQUEST_INFO` and `RESOLVE` when `UNDER_REVIEW` and assigned to the caller, and
+  empty otherwise.
+- The seeder drives demo disputes through these transitions. Disputes it claims are assigned to
+  `lerato` and her events record her as the actor; at least one dispute is left `SUBMITTED` and
+  unassigned so the queue is never empty.
 
 ```mermaid
 stateDiagram-v2
@@ -69,7 +87,24 @@ stateDiagram-v2
     WITHDRAWN --> [*]
 ```
 
-In this version the API exposes only `create` and `withdraw`.
+From API version 1.2.0 every transition is exposed: `create`, `withdraw` and `customer_respond` to
+customers, and `claim`, `request_info` and the two resolves to agents.
+
+### Internal notes and timeline visibility
+- `dispute_event.message` is customer-visible. `dispute_event.note_internal` is back-office only.
+- The customer `DisputeDetail.timeline` never contains internal notes or agent names: it maps only
+  `status`, `previousStatus`, `actor`, `message` and `occurredAt`. The customer DTO has no field
+  that could carry a note, so a mapping mistake cannot leak one.
+- The agent `AgentDisputeDetail.timeline` adds `actorName` and `internalNote`.
+- Only `resolve` writes an internal note in this version. `request_info` and `customer_respond`
+  write a customer-visible message; `create`, `claim` and `withdraw` write neither.
+
+### Agent queue
+- `queue=UNASSIGNED` (default): `assigned_agent_id is null`. `MINE`: assigned to the caller.
+  `ALL`: no assignment filter.
+- With no `status` filter, `UNASSIGNED` and `MINE` return open disputes only; `ALL` returns every status.
+- `q` matches dispute reference, merchant name or customer display name (case-insensitive contains).
+- Ordered by `created_at` ascending, then `id`: a work queue is first in, first out.
 
 ## 4. Eligibility
 
@@ -190,7 +225,8 @@ Index `ix_account_owner` on `owner_id` serves "my accounts" and the ownership ch
 | `created_at` | `timestamp with time zone` | not null |
 | `updated_at` | `timestamp with time zone` | not null |
 | `resolved_at` | `timestamp with time zone` | null |
-| `version` | `bigint` | not null, default 0 (JPA `@Version`; not exposed in the API yet) |
+| `version` | `bigint` | not null, default 0 (JPA `@Version`; not exposed in the API, see ADR 0006) |
+| `assigned_agent_id` | `uuid` | null, FK `app_user(id)` (added in V2; null until claimed) |
 
 `customer_id` duplicates the owner reachable through `transaction → account → owner` on purpose:
 the ownership filter on disputes is a single indexed column.
@@ -201,14 +237,23 @@ the ownership filter on disputes is a single indexed column.
 | `id` | `uuid` | primary key |
 | `dispute_id` | `uuid` | not null, FK `dispute(id)` |
 | `actor_role` | `varchar(20)` | not null, check in (`CUSTOMER`, `AGENT`, `SYSTEM`) |
-| `actor_id` | `uuid` | null, FK `app_user(id)` (null for seeded agent and system events) |
+| `actor_id` | `uuid` | null, FK `app_user(id)` (null for system events) |
 | `from_status` | `varchar(30)` | null (null for the creation event) |
 | `to_status` | `varchar(30)` | not null |
 | `message` | `varchar(1000)` | null (customer-visible) |
+| `note_internal` | `varchar(1000)` | null (added in V2; back-office only, never in customer views) |
 | `created_at` | `timestamp with time zone` | not null |
 
-Append-only: rows are never updated or deleted. The API maps them to `TimelineEvent`
+Append-only: rows are never updated or deleted. The customer API maps them to `TimelineEvent`
 (`to_status` → `status`, `from_status` → `previousStatus`, `actor_role` → `actor`, `created_at` → `occurredAt`).
+The agent API maps them to `AgentTimelineEvent`, which adds `actorName` (the actor's display name)
+and `internalNote` (`note_internal`).
+
+### Migration V2 (agent back office)
+Additive only; V1 is not edited. Portable to PostgreSQL and H2 in PostgreSQL mode.
+- `alter table dispute add column assigned_agent_id uuid null`, with a foreign key to `app_user(id)`.
+- `alter table dispute_event add column note_internal varchar(1000) null`.
+- Index `dispute (status, created_at)` for the agent queue.
 
 ### Sequence and indexes
 - `create sequence dispute_reference_seq start with 1`
@@ -216,6 +261,7 @@ Append-only: rows are never updated or deleted. The API maps them to `TimelineEv
 - `bank_transaction (account_id, posted_at desc)`: the transaction list.
 - `dispute (customer_id, created_at desc)`: the dispute history.
 - `dispute (transaction_id)`: eligibility rule 4 and `disputeStatus` on transactions.
+- `dispute (status, created_at)` (V2): the agent queue, oldest first, filtered by status.
 - `dispute_event (dispute_id, created_at)`: the timeline.
 
 ```mermaid
@@ -224,6 +270,7 @@ erDiagram
     account ||--o{ bank_transaction : has
     bank_transaction ||--o{ dispute : "disputed by"
     app_user ||--o{ dispute : raises
+    app_user |o--o{ dispute : "is assigned"
     dispute ||--|{ dispute_event : records
     app_user |o--o{ dispute_event : "acts in"
 
@@ -271,6 +318,7 @@ erDiagram
         timestamptz updated_at
         timestamptz resolved_at
         bigint version
+        uuid assigned_agent_id FK
     }
     dispute_event {
         uuid id PK
@@ -280,6 +328,7 @@ erDiagram
         varchar from_status
         varchar to_status
         varchar message
+        varchar note_internal
         timestamptz created_at
     }
 ```
@@ -307,6 +356,9 @@ erDiagram
 - `403 FORBIDDEN` is reserved for a missing or invalid CSRF token, or a role that may not call an
   operation.
 - `OwnershipAcceptanceTest` proves this for every customer endpoint with two seeded customers.
+- Agents are not owners: they reach every dispute, but only through `/agent/disputes`. An unknown
+  dispute id returns `404 NOT_FOUND`. Agents get `403` on customer operations and customers get
+  `403` on agent operations.
 
 ## 10. Error codes
 
@@ -318,12 +370,13 @@ branch on `code`, never on `title` or `detail`.
 | `VALIDATION_FAILED` | 400 | Bean Validation failure (with `errors[]`), malformed JSON, or a parameter type mismatch (for example a path id that is not a UUID) |
 | `BAD_CREDENTIALS` | 401 | Wrong username or password on login |
 | `UNAUTHENTICATED` | 401 | No valid session |
-| `FORBIDDEN` | 403 | Missing or invalid CSRF token, or a role that may not call the operation |
+| `FORBIDDEN` | 403 | Missing or invalid CSRF token, or the wrong role (an agent on a customer operation, a customer on an agent operation) |
 | `NOT_FOUND` | 404 | Resource does not exist or belongs to another customer |
 | `METHOD_NOT_ALLOWED` | 405 | HTTP method not supported on the path |
 | `NOT_ACCEPTABLE` | 406 | `Accept` header asks for a media type the API cannot produce |
 | `DISPUTE_ALREADY_EXISTS` | 409 | Transaction already has a non-withdrawn dispute |
-| `INVALID_DISPUTE_TRANSITION` | 409 | State machine rejects the transition (for example withdrawing a closed dispute) |
+| `INVALID_DISPUTE_TRANSITION` | 409 | State machine rejects the transition: wrong status (for example withdrawing a closed dispute), or an agent action by an agent who is not assigned |
+| `DISPUTE_MODIFIED` | 409 | Optimistic locking detected a concurrent change: "Someone else changed this dispute. Reload and try again." |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Request body is not `application/json` |
 | `TRANSACTION_NOT_ELIGIBLE` | 422 | Transaction is a credit, pending, or older than the dispute window |
 | `TOO_MANY_LOGIN_ATTEMPTS` | 429 | Five failed logins for the username within 15 minutes |
@@ -347,6 +400,8 @@ enum rather than on every operation.
 6. `q` is a case-insensitive "contains" match, 1-100 characters.
 7. Accounts are listed by product name; transactions by `posted_at` desc then `id`; disputes by
    `created_at` desc then `id`, so paging is stable.
-8. The timeline is oldest first and contains only customer-visible information. The creation and
-   withdrawal events carry no message.
+8. The timeline is oldest first and contains only customer-visible information. The creation,
+   claim and withdrawal events carry no message.
 9. ProblemDetail `type` is `about:blank`; clients branch on `code`.
+10. Message fields on reply, request-info and resolve are trimmed before validation; blank
+    after trimming returns `400 VALIDATION_FAILED`.

@@ -1,7 +1,7 @@
 # 5. First release scope: the customer journey, with room for the back office
 
 Date: 2026-10-26
-Status: Accepted
+Status: Accepted; partly superseded by [0006](0006-agent-back-office.md) (agent back office)
 
 ## Context
 The brief requires customers to view transactions, dispute them and see a history of their disputes,
