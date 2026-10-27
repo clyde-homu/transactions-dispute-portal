@@ -290,11 +290,14 @@ Additive only; V1 is not edited. Portable to PostgreSQL and H2 in PostgreSQL mod
 ### Migration V4 (SLA due dates)
 Additive only; earlier migrations are not edited. Portable to PostgreSQL and H2 in PostgreSQL mode.
 1. `alter table dispute add column due_at timestamp with time zone null`.
-2. Backfill existing rows from the reason code, using standard interval literals (both databases
-   accept `interval '10' day`; avoid `DATEADD` and `make_interval`):
-   `update dispute set due_at = case when reason_code in ('F01','F02','A01') then created_at + interval '10' day when reason_code in ('P01','P02') then created_at + interval '15' day else created_at + interval '30' day end`.
+2. Backfill existing rows from the reason code in exact 24-hour days, written as hour intervals
+   (`interval '240' hour`, `'360'`, `'720'`). Day intervals are deliberately avoided: PostgreSQL adds
+   days in the session time zone, so across a daylight-saving change a "day" is 23 or 25 hours and
+   the backfill would disagree with `DisputeReason.dueAt` in Java. Both databases accept the standard
+   hour literal; avoid `DATEADD`, `make_interval` and `'10 days'`, which H2 rejects.
+   `DueAtBackfillPostgresIT` proves this with the session zone set to Europe/London across a clock change.
 3. `alter table dispute alter column due_at set not null`.
-4. Index `dispute (status, due_at)` for the default queue order and the overdue filter.
+4. Index `ix_dispute_status_due` on `dispute (status, due_at)` for the default queue order and the overdue filter.
 
 ### Sequence and indexes
 - `create sequence dispute_reference_seq start with 1`

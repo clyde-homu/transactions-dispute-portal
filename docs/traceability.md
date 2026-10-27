@@ -45,6 +45,7 @@ Screens are SPA routes. "Covered" means the named tests exist and pass locally (
 | P16 | CI | GitHub Actions: backend verify, frontend lint/type-check/test/build, image build + health check with a demo sign-in, Playwright smoke journeys against the compose stack; Dependabot | | Workflow runs on every PR | covered |
 | P17 | Role separation and information hiding | Customer and agent APIs and routes each reject the other role with 403; only the assigned agent can request information or resolve; internal notes and agent names are never serialised into customer responses | `/disputes/**`, `/agent/disputes/**` | `AgentDisputeControllerTest`, `AgentWorkflowIT`, `agent-journey.spec.ts` (checks both the page and the API response) | covered |
 | P18 | Concurrency | Pessimistic lock on the transaction when creating a dispute; optimistic locking on disputes returns 409 `DISPUTE_MODIFIED`; two agents cannot both claim | `POST /disputes`, `/agent/disputes/{id}/claim` | `DisputeLifecycleIT` (parallel create), `AgentWorkflowIT` (claim race) | covered |
+| P19 | Service levels | Due date stored at creation from the reason's SLA (exact 24-hour days); overdue computed on read for open disputes; queue sorted by due date with an overdue filter; customers see a target date only (ADR 0007) | `GET /dispute-reasons`, `GET /agent/disputes?sort=&overdue=`, all dispute responses | `DisputeSlaTest`, `SlaDueDateIT`, `DueAtBackfillH2Test`, `DueAtBackfillPostgresIT`, `AgentDisputeControllerTest` | covered |
 
 ## Test classes and specs
 
@@ -64,3 +65,6 @@ Screens are SPA routes. "Covered" means the named tests exist and pass locally (
 | `auth.spec.ts` | Playwright E2E | Bad password, sign-in, sign-out, deep-link redirect |
 | `customer-journey.spec.ts` | Playwright E2E | Raise a partial dispute, find it in the history, withdraw it; another customer gets "not found" (desktop and phone layouts) |
 | `agent-journey.spec.ts` | Playwright E2E | The full back-office journey across both roles, and each role kept out of the other's area |
+| `DisputeSlaTest` | Domain unit | SLA days per reason, due date fixed at creation, overdue boundary (exactly due vs one second later), closed disputes never overdue |
+| `SlaDueDateIT` | Integration (Testcontainers) | Due date stored on create, queue order by due date, overdue filter agrees with the domain rule, customer responses carry no overdue flag |
+| `DueAtBackfillH2Test`, `DueAtBackfillPostgresIT` | Migration | V4 backfill on both databases, NOT NULL and index, and exact 24-hour days across a daylight-saving change |

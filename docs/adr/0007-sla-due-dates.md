@@ -14,8 +14,10 @@ see what is late; customers need to know when to expect an answer.
 - Each reason code has an SLA in calendar days: F01, F02, A01 = 10; P01, P02 = 15; C01-C03 = 30.
   `GET /dispute-reasons` returns it as `slaDays`.
 - `due_at = created_at + SLA days` is stored on the dispute at creation and never recalculated.
-  Migration V4 adds the column, backfills existing rows from their reason code, and indexes
-  `dispute (status, due_at)`.
+  A "day" is exactly 24 hours in UTC, in Java and in SQL alike. Migration V4 adds the column,
+  backfills existing rows from their reason code using hour intervals (PostgreSQL day intervals
+  follow the session time zone and would drift by an hour across a daylight-saving change), and
+  indexes `dispute (status, due_at)`.
 - `overdue` = open status and now after `due_at`, computed at read time. Closed disputes are never
   overdue.
 - Agents get `dueAt`, `overdue`, an `overdue=true` filter and `sort=DUE_AT | CREATED_AT`, with
