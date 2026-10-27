@@ -228,6 +228,8 @@ function onRowClick(event: Event, row: TransactionSummary): void {
               v-for="preset in RANGE_PRESETS"
               :key="preset"
               clickable
+              role="button"
+              :aria-pressed="range === preset"
               :selected="range === preset"
               :outline="range !== preset"
               color="primary"

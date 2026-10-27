@@ -197,6 +197,8 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
           v-for="option in AGENT_QUEUE_SORTS"
           :key="option"
           clickable
+          role="button"
+          :aria-pressed="sort === option"
           :selected="sort === option"
           :outline="sort !== option"
           color="primary"
