@@ -1,6 +1,6 @@
 # Dispute Portal: domain model
 
-This is the domain reference for the customer journey and the agent back office (API version 1.2.0).
+This is the domain reference for the customer journey and the agent back office, with SLA due dates (API version 1.3.0).
 The API contract is in [`openapi.yaml`](openapi.yaml), decisions are in [`adr/`](adr/README.md), and
 the brief-to-test mapping is in [`traceability.md`](traceability.md).
 
@@ -104,7 +104,9 @@ customers, and `claim`, `request_info` and the two resolves to agents.
   `ALL`: no assignment filter.
 - With no `status` filter, `UNASSIGNED` and `MINE` return open disputes only; `ALL` returns every status.
 - `q` matches dispute reference, merchant name or customer display name (case-insensitive contains).
-- Ordered by `created_at` ascending, then `id`: a work queue is first in, first out.
+- `overdue=true` keeps only overdue disputes (section 5a); `false` or absent applies no filter.
+- `sort=DUE_AT` (default): `due_at` ascending, then `created_at`, then `id`, so the most urgent work
+  comes first. `sort=CREATED_AT`: `created_at` ascending, then `id` (first in, first out). See ADR 0007.
 
 ## 4. Eligibility
 
@@ -155,7 +157,36 @@ The categories mirror how card schemes group disputes.
 | `CONSUMER` | Goods or services | `C02` | I cancelled, but I'm still being charged |
 | `CONSUMER` | Goods or services | `C03` | My refund never arrived |
 
-SLA days per category are not used in this version (ADR 0005).
+Each code also carries an SLA in calendar days (section 5a), served as `slaDays` on each reason.
+
+## 5a. SLA and overdue
+
+Since API version 1.3.0 (ADR 0007).
+
+| Codes | SLA (calendar days) |
+|---|---|
+| `F01`, `F02`, `A01` | 10 |
+| `P01`, `P02` | 15 |
+| `C01`, `C02`, `C03` | 30 |
+
+- `due_at = created_at + SLA days`. It is computed once, when the dispute is created, from the
+  reason code at that moment, and stored. It is never recalculated, so changing the catalogue later
+  does not move existing promises. Times are UTC, so a calendar day is exactly 24 hours (South
+  Africa has no daylight saving).
+- A dispute is **overdue** when its status is open (`SUBMITTED`, `UNDER_REVIEW`,
+  `AWAITING_CUSTOMER_INFO`) and the current time (injected `Clock`) is after `due_at`. Closed
+  disputes (`RESOLVED_UPHELD`, `RESOLVED_DECLINED`, `WITHDRAWN`) are never overdue, even if they were
+  closed late. `overdue` is computed at read time, not stored.
+- Deliberate simplifications: the clock keeps running in `AWAITING_CUSTOMER_INFO`, and days are
+  calendar days, not business days. Next steps are in ADR 0007.
+- Visibility:
+
+| Field | Customer (`DisputeSummary`, `DisputeDetail`) | Agent (`AgentDisputeSummary`, `AgentDisputeDetail`) |
+|---|---|---|
+| `dueAt` | Yes, shown as "We aim to give you an answer by ..." | Yes |
+| `overdue` | No | Yes, plus the `overdue` queue filter and `sort=DUE_AT` |
+
+Customers get a promise, not an internal performance flag; agents need the flag to prioritise.
 
 ## 6. Dispute reference
 
@@ -227,6 +258,7 @@ Index `ix_account_owner` on `owner_id` serves "my accounts" and the ownership ch
 | `resolved_at` | `timestamp with time zone` | null |
 | `version` | `bigint` | not null, default 0 (JPA `@Version`; not exposed in the API, see ADR 0006) |
 | `assigned_agent_id` | `uuid` | null, FK `app_user(id)` (added in V2; null until claimed) |
+| `due_at` | `timestamp with time zone` | not null (added in V4; `created_at` + SLA days of `reason_code`) |
 
 `customer_id` duplicates the owner reachable through `transaction → account → owner` on purpose:
 the ownership filter on disputes is a single indexed column.
@@ -255,13 +287,23 @@ Additive only; V1 is not edited. Portable to PostgreSQL and H2 in PostgreSQL mod
 - `alter table dispute_event add column note_internal varchar(1000) null`.
 - Index `dispute (status, created_at)` for the agent queue.
 
+### Migration V4 (SLA due dates)
+Additive only; earlier migrations are not edited. Portable to PostgreSQL and H2 in PostgreSQL mode.
+1. `alter table dispute add column due_at timestamp with time zone null`.
+2. Backfill existing rows from the reason code, using standard interval literals (both databases
+   accept `interval '10' day`; avoid `DATEADD` and `make_interval`):
+   `update dispute set due_at = case when reason_code in ('F01','F02','A01') then created_at + interval '10' day when reason_code in ('P01','P02') then created_at + interval '15' day else created_at + interval '30' day end`.
+3. `alter table dispute alter column due_at set not null`.
+4. Index `dispute (status, due_at)` for the default queue order and the overdue filter.
+
 ### Sequence and indexes
 - `create sequence dispute_reference_seq start with 1`
 - `ix_account_owner` on `account (owner_id)`: "my accounts" and ownership checks.
 - `bank_transaction (account_id, posted_at desc)`: the transaction list.
 - `dispute (customer_id, created_at desc)`: the dispute history.
 - `dispute (transaction_id)`: eligibility rule 4 and `disputeStatus` on transactions.
-- `dispute (status, created_at)` (V2): the agent queue, oldest first, filtered by status.
+- `dispute (status, created_at)` (V2): the agent queue with `sort=CREATED_AT`.
+- `dispute (status, due_at)` (V4): the agent queue with `sort=DUE_AT` (default) and `overdue=true`.
 - `dispute_event (dispute_id, created_at)`: the timeline.
 
 ```mermaid
@@ -319,6 +361,7 @@ erDiagram
         timestamptz resolved_at
         bigint version
         uuid assigned_agent_id FK
+        timestamptz due_at
     }
     dispute_event {
         uuid id PK
