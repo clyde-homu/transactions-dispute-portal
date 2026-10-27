@@ -37,8 +37,9 @@ const errorId = useId();
         :data-testid="`option-${option.value}`"
       />
       <q-icon v-if="option.icon" :name="option.icon" size="md" aria-hidden="true" />
-      <span class="radio-card__label">
-        {{ option.label }}
+      <!-- The label keeps its own element so it can be found and read on its own; the hint sits below it. -->
+      <span class="radio-card__text">
+        <span class="radio-card__label">{{ option.label }}</span>
         <span v-if="option.hint" class="radio-card__hint muted text-caption">{{
           option.hint
         }}</span>
@@ -112,10 +113,11 @@ const errorId = useId();
   text-align: center;
 }
 
-.radio-card__label {
+.radio-card__text {
   flex: 1 1 auto;
 }
 
+.radio-card__label,
 .radio-card__hint {
   display: block;
 }
