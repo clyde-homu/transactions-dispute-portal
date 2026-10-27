@@ -9,6 +9,8 @@ import com.clydehomu.disputes.account.infrastructure.AccountRepository;
 import com.clydehomu.disputes.auth.domain.AppUser;
 import com.clydehomu.disputes.auth.domain.Role;
 import com.clydehomu.disputes.auth.infrastructure.AppUserRepository;
+import com.clydehomu.disputes.dispute.domain.DisputeReason;
+import com.clydehomu.disputes.dispute.domain.DisputeStatus;
 import com.clydehomu.disputes.dispute.infrastructure.DisputeRepository;
 import com.clydehomu.disputes.seed.application.DemoDataSeeder;
 import com.clydehomu.disputes.shared.config.AppProperties;
@@ -226,7 +228,7 @@ class DemoDataSeederIT extends PostgresIntegrationSupport {
     private static final String DEMO_CUSTOMERS = "('thandi', 'pieter')";
 
     @Test
-    void thandiHasDisputesInEveryStatusAndPieterHasOne() {
+    void thandiHasDisputesInEveryStatusAndPieterHasThree() {
         List<String> thandiStatuses = jdbc.queryForList("""
                 select distinct d.status from dispute d join app_user u on u.id = d.customer_id
                 where u.username = 'thandi'
@@ -245,7 +247,28 @@ class DemoDataSeederIT extends PostgresIntegrationSupport {
                 """)).isGreaterThanOrEqualTo(6);
         assertThat(count("""
                 select count(*) from dispute d join app_user u on u.id = d.customer_id where u.username = 'pieter'
-                """)).isGreaterThanOrEqualTo(1);
+                """)).isGreaterThanOrEqualTo(3);
+    }
+
+    @Test
+    void everySeededDueDateIsTheReasonsSlaAndTheOpenOnesIncludeLateAndOnTimeWork() {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select d.reference, d.reason_code, d.status, d.created_at, d.due_at
+                from dispute d join app_user u on u.id = d.customer_id where u.username in %s
+                """.formatted(DEMO_CUSTOMERS));
+
+        assertThat(rows)
+                .allSatisfy(row -> assertThat(instant(row.get("due_at")))
+                        .as(row.get("reference").toString())
+                        .isEqualTo(DisputeReason.valueOf((String) row.get("reason_code"))
+                                .dueAt(instant(row.get("created_at")))));
+        List<Instant> openDueDates = rows.stream()
+                .filter(row -> DisputeStatus.valueOf((String) row.get("status")).isOpen())
+                .map(row -> instant(row.get("due_at")))
+                .toList();
+        assertThat(openDueDates).anyMatch(due -> due.isBefore(clock.instant()));
+        assertThat(openDueDates.stream().filter(due -> !due.isBefore(clock.instant())))
+                .hasSizeGreaterThanOrEqualTo(2);
     }
 
     @Test

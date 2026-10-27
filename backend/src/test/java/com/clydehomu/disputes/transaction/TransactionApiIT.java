@@ -9,6 +9,7 @@ import com.clydehomu.disputes.account.infrastructure.AccountRepository;
 import com.clydehomu.disputes.auth.domain.AppUser;
 import com.clydehomu.disputes.auth.domain.Role;
 import com.clydehomu.disputes.auth.infrastructure.AppUserRepository;
+import com.clydehomu.disputes.dispute.domain.DisputeReason;
 import com.clydehomu.disputes.shared.config.AppProperties;
 import com.clydehomu.disputes.shared.config.BankTimeZone;
 import com.clydehomu.disputes.transaction.domain.BankTransaction;
@@ -436,11 +437,13 @@ class TransactionApiIT extends PostgresIntegrationSupport {
     private UUID dispute(UUID customerId, UUID transactionId, String reference, String status, Instant createdAt) {
         UUID id = UUID.randomUUID();
         OffsetDateTime at = OffsetDateTime.ofInstant(createdAt, ZoneOffset.UTC);
+        // The due date is mandatory since V4; these rows use the SLA of their reason, P01.
+        OffsetDateTime due = OffsetDateTime.ofInstant(DisputeReason.P01.dueAt(createdAt), ZoneOffset.UTC);
         jdbc.update("""
                 insert into dispute (id, reference, transaction_id, customer_id, reason_code, disputed_amount, currency,
-                                     description, status, created_at, updated_at, version)
-                values (?, ?, ?, ?, 'P01', 10.00, 'ZAR', 'Row inserted directly by an integration test', ?, ?, ?, 0)
-                """, id, reference, transactionId, customerId, status, at, at);
+                                     description, status, created_at, updated_at, due_at, version)
+                values (?, ?, ?, ?, 'P01', 10.00, 'ZAR', 'Row inserted directly by an integration test', ?, ?, ?, ?, 0)
+                """, id, reference, transactionId, customerId, status, at, at, due);
         return id;
     }
 }

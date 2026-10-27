@@ -253,17 +253,40 @@ final class DemoCatalogue {
                                     PHARMACY,
                                     new BigDecimal("312.40"),
                                     CHEQUE_MERCHANTS))),
-                    List.of(new DisputeSpec(
-                            CHEQUE,
-                            Duration.ofDays(6).plusHours(1),
-                            DisputeReason.F02,
-                            100,
-                            null,
-                            "My card was stolen at a restaurant and I did not make this payment to %s. I have already blocked the card.",
-                            List.of(step(
-                                    DisputeAction.CLAIM,
-                                    Duration.ofHours(2),
-                                    "Your card has been blocked and a fraud analyst is reviewing this payment."))))));
+                    // Two unclaimed disputes shape the default queue for the SLA demo (ADR 0007). The fraud case is
+                    // past
+                    // its 10 days, so it is overdue and, ordered by due date, sits above the older consumer case that
+                    // still has 17 days left. Their ages are relative to "now", so this stays true whichever day the
+                    // data is loaded.
+                    List.of(
+                            new DisputeSpec(
+                                    CHEQUE,
+                                    Duration.ofDays(13).plusHours(2),
+                                    DisputeReason.C03,
+                                    100,
+                                    null,
+                                    "I returned an item to %s and was promised a refund, but the money has not reached my account.",
+                                    List.of()),
+                            new DisputeSpec(
+                                    CHEQUE,
+                                    Duration.ofDays(12).plusHours(5),
+                                    DisputeReason.F01,
+                                    100,
+                                    null,
+                                    "I do not recognise this payment to %s. I have not shared my card or my PIN with anyone.",
+                                    List.of()),
+                            new DisputeSpec(
+                                    CHEQUE,
+                                    Duration.ofDays(6).plusHours(1),
+                                    DisputeReason.F02,
+                                    100,
+                                    null,
+                                    "My card was stolen at a restaurant and I did not make this payment to %s. I have already blocked the card.",
+                                    List.of(
+                                            step(
+                                                    DisputeAction.CLAIM,
+                                                    Duration.ofHours(2),
+                                                    "Your card has been blocked and a fraud analyst is reviewing this payment."))))));
 
     private DemoCatalogue() {}
 

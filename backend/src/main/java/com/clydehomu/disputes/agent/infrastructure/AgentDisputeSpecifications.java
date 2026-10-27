@@ -3,6 +3,7 @@ package com.clydehomu.disputes.agent.infrastructure;
 import com.clydehomu.disputes.agent.domain.AgentDisputeSearch;
 import com.clydehomu.disputes.auth.domain.AppUser;
 import com.clydehomu.disputes.dispute.domain.Dispute;
+import com.clydehomu.disputes.dispute.domain.DisputeStatus;
 import com.clydehomu.disputes.transaction.domain.BankTransaction;
 import com.clydehomu.disputes.transaction.infrastructure.TransactionSpecifications;
 import jakarta.persistence.criteria.CriteriaBuilder;
@@ -11,6 +12,7 @@ import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +46,12 @@ public final class AgentDisputeSpecifications {
             }
             if (!search.statuses().isEmpty()) {
                 predicates.add(root.get("status").in(search.statuses()));
+            }
+            if (search.overdueAsOf() != null) {
+                // The query form of Dispute.isOverdue: open, and due strictly before the instant. It narrows whatever
+                // status filter is already there, so asking for overdue closed disputes finds none.
+                predicates.add(root.get("status").in(DisputeStatus.openStatuses()));
+                predicates.add(cb.lessThan(root.<Instant>get("dueAt"), search.overdueAsOf()));
             }
             if (search.text() != null) {
                 String pattern =

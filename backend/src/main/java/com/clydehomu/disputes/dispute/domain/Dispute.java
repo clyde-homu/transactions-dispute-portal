@@ -77,6 +77,11 @@ public class Dispute {
     @Column(name = "resolved_at")
     private Instant resolvedAt;
 
+    // Fixed at creation from the reason's SLA and never recalculated, so a later change to the catalogue cannot move a
+    // date already promised to the customer. Whether the dispute is overdue is derived from it, not stored.
+    @Column(name = "due_at", nullable = false)
+    private Instant dueAt;
+
     // Null until an agent claims the dispute; kept after resolution so the history shows who decided it. A plain id
     // like customerId: names are looked up when a back-office view needs them.
     @Column(name = "assigned_agent_id")
@@ -103,6 +108,7 @@ public class Dispute {
         this.status = initialStatus;
         this.createdAt = now;
         this.updatedAt = now;
+        this.dueAt = request.reason().dueAt(now);
     }
 
     /** Records the move and, for a final status, when the dispute was closed. */
@@ -169,6 +175,19 @@ public class Dispute {
 
     public Instant getResolvedAt() {
         return resolvedAt;
+    }
+
+    public Instant getDueAt() {
+        return dueAt;
+    }
+
+    /**
+     * Whether the dispute is open and past its due date at {@code now}. The only definition of "overdue": a dispute due
+     * exactly at {@code now} is not late yet, and a closed one never is, however late it was closed. The agent queue's
+     * {@code overdue} filter expresses the same rule in the query (open status, due before the instant).
+     */
+    public boolean isOverdue(Instant now) {
+        return status.isOpen() && now.isAfter(dueAt);
     }
 
     public UUID getAssignedAgentId() {

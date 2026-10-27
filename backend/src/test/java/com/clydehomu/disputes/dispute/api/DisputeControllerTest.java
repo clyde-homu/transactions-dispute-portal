@@ -114,6 +114,20 @@ class DisputeControllerTest {
     }
 
     @Test
+    void everyReasonCarriesItsSlaInCalendarDays() throws Exception {
+        mockMvc.perform(get("/api/v1/dispute-reasons").with(user(customer)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].reasons[0].slaDays").value(10))
+                .andExpect(jsonPath("$[0].reasons[1].slaDays").value(10))
+                .andExpect(jsonPath("$[1].reasons[0].slaDays").value(10))
+                .andExpect(jsonPath("$[2].reasons[0].slaDays").value(15))
+                .andExpect(jsonPath("$[2].reasons[1].slaDays").value(15))
+                .andExpect(jsonPath("$[3].reasons[0].slaDays").value(30))
+                .andExpect(jsonPath("$[3].reasons[1].slaDays").value(30))
+                .andExpect(jsonPath("$[3].reasons[2].slaDays").value(30));
+    }
+
+    @Test
     void reasonsRequireASession() throws Exception {
         mockMvc.perform(get("/api/v1/dispute-reasons"))
                 .andExpect(status().isUnauthorized())
@@ -143,6 +157,8 @@ class DisputeControllerTest {
                 .andExpect(jsonPath("$.merchantName").value("Metro Fuel N1"))
                 .andExpect(jsonPath("$.createdAt").value("2026-10-24T12:30:00Z"))
                 .andExpect(jsonPath("$.updatedAt").value("2026-10-24T12:30:00Z"))
+                .andExpect(jsonPath("$.dueAt").value("2026-11-08T12:30:00Z"))
+                .andExpect(jsonPath("$.overdue").doesNotExist())
                 .andExpect(jsonPath("$.description").value("The pump charged me R1250 for R1000 of fuel."))
                 .andExpect(jsonPath("$.transaction.id").value(TRANSACTION_ID.toString()))
                 .andExpect(jsonPath("$.transaction.amount").value("1250.00"))
@@ -402,6 +418,8 @@ class DisputeControllerTest {
                 .andExpect(jsonPath("$.items[0].merchantName").value("Metro Fuel N1"))
                 .andExpect(jsonPath("$.items[0].createdAt").value("2026-10-24T12:30:00Z"))
                 .andExpect(jsonPath("$.items[0].updatedAt").value("2026-10-24T12:30:00Z"))
+                .andExpect(jsonPath("$.items[0].dueAt").value("2026-11-08T12:30:00Z"))
+                .andExpect(jsonPath("$.items[0].overdue").doesNotExist())
                 .andExpect(jsonPath("$.items[0].description").doesNotExist())
                 .andExpect(jsonPath("$.items[0].timeline").doesNotExist());
     }
@@ -509,6 +527,23 @@ class DisputeControllerTest {
                 .andExpect(jsonPath("$.timeline[1].occurredAt").value("2026-10-24T13:30:00Z"))
                 .andExpect(jsonPath("$.timeline[1].actorId").doesNotExist())
                 .andExpect(jsonPath("$.canWithdraw").value(true));
+    }
+
+    @Test
+    void aCustomerSeesTheDueDateOfAnOpenDisputeEvenWhenItIsLongPastButNeverAnOverdueFlag() throws Exception {
+        Dispute longOpen = submitted(Instant.parse("2025-01-06T08:00:00.500Z"), DisputeReason.F01);
+        when(service.get(CUSTOMER_ID, DISPUTE_ID)).thenReturn(new DisputeView(longOpen, DisputeStatus.SUBMITTED));
+        when(service.list(eq(CUSTOMER_ID), any()))
+                .thenReturn(new PageImpl<>(List.of(longOpen), PageRequest.of(0, 20), 1));
+
+        mockMvc.perform(get("/api/v1/disputes/" + DISPUTE_ID).with(user(customer)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dueAt").value("2025-01-16T08:00:00Z"))
+                .andExpect(jsonPath("$.overdue").doesNotExist());
+        mockMvc.perform(get("/api/v1/disputes").with(user(customer)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].dueAt").value("2025-01-16T08:00:00Z"))
+                .andExpect(jsonPath("$.items[0].overdue").doesNotExist());
     }
 
     @Test
@@ -852,6 +887,10 @@ class DisputeControllerTest {
 
     /** A freshly raised dispute built through the real state machine, with ids a database would have assigned. */
     private static Dispute submitted() {
+        return submitted(RAISED_AT, DisputeReason.P02);
+    }
+
+    private static Dispute submitted(Instant raisedAt, DisputeReason reason) {
         BankTransaction transaction = new BankTransaction(
                 null,
                 "TXN-20261019-000151",
@@ -864,12 +903,12 @@ class DisputeControllerTest {
                 "Fuel",
                 Channel.CARD);
         ReflectionTestUtils.setField(transaction, "id", TRANSACTION_ID);
-        Dispute dispute = new DisputeStateMachine(Clock.fixed(RAISED_AT, ZoneOffset.UTC))
+        Dispute dispute = new DisputeStateMachine(Clock.fixed(raisedAt, ZoneOffset.UTC))
                 .create(
                         new NewDispute(
                                 transaction,
                                 CUSTOMER_ID,
-                                DisputeReason.P02,
+                                reason,
                                 new BigDecimal("250.00"),
                                 "The pump charged me R1250 for R1000 of fuel.",
                                 "DSP-2026-000008"),

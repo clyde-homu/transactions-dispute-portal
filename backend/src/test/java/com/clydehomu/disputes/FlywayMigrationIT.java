@@ -22,7 +22,7 @@ class FlywayMigrationIT extends PostgresIntegrationSupport {
                 "select version from flyway_schema_history where success and version is not null order by installed_rank",
                 String.class);
 
-        assertThat(applied).containsExactly("1", "2", "3");
+        assertThat(applied).containsExactly("1", "2", "3", "4");
     }
 
     @Test
@@ -45,6 +45,7 @@ class FlywayMigrationIT extends PostgresIntegrationSupport {
                         "ix_dispute_transaction",
                         "ix_dispute_status_created",
                         "ix_dispute_assigned_agent",
+                        "ix_dispute_status_due",
                         "ix_dispute_event_dispute_created");
     }
 
