@@ -4,7 +4,7 @@ import { useId } from 'vue';
 defineProps<{
   /** Names the group for assistive technology; the visible heading is the step title. */
   legend: string;
-  options: { value: T; label: string; icon?: string }[];
+  options: { value: T; label: string; icon?: string; hint?: string }[];
   /** Arranged as a grid of tiles, or as a plain vertical list. */
   layout?: 'tiles' | 'list';
   error?: string | undefined;
@@ -37,7 +37,12 @@ const errorId = useId();
         :data-testid="`option-${option.value}`"
       />
       <q-icon v-if="option.icon" :name="option.icon" size="md" aria-hidden="true" />
-      <span class="radio-card__label">{{ option.label }}</span>
+      <span class="radio-card__label">
+        {{ option.label }}
+        <span v-if="option.hint" class="radio-card__hint muted text-caption">{{
+          option.hint
+        }}</span>
+      </span>
       <!-- The tick, not just the border colour, says which one is chosen. -->
       <q-icon
         v-if="model === option.value"
@@ -109,6 +114,10 @@ const errorId = useId();
 
 .radio-card__label {
   flex: 1 1 auto;
+}
+
+.radio-card__hint {
+  display: block;
 }
 
 .radio-cards--tiles .radio-card__check {

@@ -33,6 +33,8 @@ const FUEL: AgentDisputeSummary = {
   assignedAgentName: null,
   createdAt: '2026-10-26T07:45:10Z',
   updatedAt: '2026-10-26T07:45:10Z',
+  dueAt: '2026-11-10T07:45:10Z',
+  overdue: false,
 };
 const STREAMBOX: AgentDisputeSummary = {
   id: '0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f',
@@ -47,6 +49,25 @@ const STREAMBOX: AgentDisputeSummary = {
   assignedAgentName: 'Lerato Dlamini',
   createdAt: '2026-10-24T12:30:00Z',
   updatedAt: '2026-10-25T10:15:00Z',
+  dueAt: '2026-11-08T12:30:00Z',
+  overdue: false,
+};
+// Raised on 14 October with a 10-day SLA, so it was due on 24 October.
+const FITLIFE: AgentDisputeSummary = {
+  id: '4c5d6e7f-8a9b-4c0d-9e1f-2a3b4c5d6e7f',
+  reference: 'DSP-2026-000005',
+  status: 'SUBMITTED',
+  reasonCode: 'A01',
+  reasonLabel: "I didn't authorise this debit order",
+  disputedAmount: '499.00',
+  currency: 'ZAR',
+  merchantName: 'FitLife Gym Debit Order',
+  customerName: 'Pieter van der Merwe',
+  assignedAgentName: null,
+  createdAt: '2026-10-14T10:20:00Z',
+  updatedAt: '2026-10-14T10:20:00Z',
+  dueAt: '2026-10-24T10:20:00Z',
+  overdue: true,
 };
 
 function pageOf(
@@ -119,7 +140,14 @@ describe('AgentQueuePage', () => {
         'false',
         'false',
       ]);
-      expect(lastCall()?.[0]).toEqual({ queue: 'UNASSIGNED', q: '', page: 0, size: 20 });
+      expect(lastCall()?.[0]).toEqual({
+        queue: 'UNASSIGNED',
+        q: '',
+        sort: 'DUE_AT',
+        overdue: false,
+        page: 0,
+        size: 20,
+      });
     });
 
     it('switches queue, reloads from the first page and keeps the choice in the address', async () => {
@@ -151,7 +179,14 @@ describe('AgentQueuePage', () => {
       );
       await mountPage('/agent?tab=all&q=fuel&page=2');
 
-      expect(lastCall()?.[0]).toEqual({ queue: 'ALL', q: 'fuel', page: 1, size: 20 });
+      expect(lastCall()?.[0]).toEqual({
+        queue: 'ALL',
+        q: 'fuel',
+        sort: 'DUE_AT',
+        overdue: false,
+        page: 1,
+        size: 20,
+      });
       expect(wrapper.get('[data-testid="tab-ALL"]').attributes('aria-selected')).toBe('true');
       expect(wrapper.get<HTMLInputElement>('[data-testid="search"]').element.value).toBe('fuel');
     });
@@ -164,7 +199,7 @@ describe('AgentQueuePage', () => {
   });
 
   describe('with disputes', () => {
-    it('shows reference, customer, merchant, reason, amount, status, agent and date, as the API ordered them', async () => {
+    it('shows reference, customer, merchant, reason, amount, status, due date, agent and raised date, as the API ordered them', async () => {
       await mountPage();
 
       const table = wrapper.get('[data-testid="queue-table"]');
@@ -175,6 +210,7 @@ describe('AgentQueuePage', () => {
         'Reason',
         'Amount',
         'Status',
+        'Due',
         'Assigned to',
         'Raised',
       ]);
@@ -188,6 +224,7 @@ describe('AgentQueuePage', () => {
       expect(first).toContain('Waiting for customer');
       expect(first).toContain('Lerato Dlamini');
       expect(first).toContain('24 Oct 2026');
+      expect(first).toContain('08 Nov 2026');
       expect(flat(wrapper.get('[data-testid="summary"]').text())).toBe('Showing 1–2 of 7 disputes');
     });
 
@@ -230,6 +267,7 @@ describe('AgentQueuePage', () => {
       expect(text).toContain('Pieter van der Merwe');
       expect(text).toContain('StreamBox Subscription');
       expect(text).toContain('Raised 24 Oct 2026');
+      expect(text).toContain('Due 08 Nov 2026');
       expect(text).toContain('Assigned to Lerato Dlamini');
       expect(text).toContain('R 189,00');
       expect(text).toContain('Waiting for customer');
@@ -250,6 +288,174 @@ describe('AgentQueuePage', () => {
 
       expect(lastCall()?.[0]).toMatchObject({ page: 1 });
       expect(router.currentRoute.value.query.page).toBe('2');
+    });
+  });
+
+  describe('due dates and the overdue badge', () => {
+    it('marks an overdue dispute with an icon and the word, and leaves the others plain', async () => {
+      vi.mocked(listAgentDisputes).mockResolvedValue(pageOf([FITLIFE, STREAMBOX]));
+      await mountPage();
+
+      const overdueRow = rows()[0];
+      const badge = overdueRow?.get('[data-testid="overdue-badge"]');
+      expect(badge?.get('.q-chip__content').text()).toBe('Overdue');
+      expect(badge?.get('.q-icon').text()).toBe('alarm');
+      expect(flat(overdueRow?.text() ?? '')).toContain('24 Oct 2026');
+      expect(rows()[1]?.find('[data-testid="overdue-badge"]').exists()).toBe(false);
+      expect(wrapper.findAll('[data-testid="overdue-badge"]')).toHaveLength(1);
+    });
+
+    it('shows no badge when nothing is overdue', async () => {
+      await mountPage();
+
+      expect(wrapper.find('[data-testid="overdue-badge"]').exists()).toBe(false);
+    });
+
+    it('keeps the overdue badge and the due date on a phone card', async () => {
+      await setViewportWidth(390);
+      vi.mocked(listAgentDisputes).mockResolvedValue(pageOf([FITLIFE, STREAMBOX]));
+      await mountPage();
+
+      const cards = wrapper.findAll('[data-testid="queue-list"] a.queue-card');
+      expect(flat(cards[0]?.text() ?? '')).toContain('Due 24 Oct 2026');
+      expect(cards[0]?.get('[data-testid="overdue-badge"] .q-chip__content').text()).toBe(
+        'Overdue',
+      );
+      expect(cards[1]?.find('[data-testid="overdue-badge"]').exists()).toBe(false);
+    });
+  });
+
+  describe('sorting and the overdue filter', () => {
+    const sortChip = (sort: string) => wrapper.get(`[data-testid="sort-${sort}"]`);
+    const chipLabel = (sort: string) => sortChip(sort).get('.q-chip__content').text();
+    const overdueToggle = () => wrapper.get('[data-testid="overdue-only"]');
+
+    it('is sorted by due date unless told otherwise, with both choices labelled', async () => {
+      await mountPage();
+
+      expect(chipLabel('DUE_AT')).toBe('Due soonest');
+      expect(chipLabel('CREATED_AT')).toBe('Oldest first');
+      expect(sortChip('DUE_AT').attributes('aria-pressed')).toBe('true');
+      expect(sortChip('CREATED_AT').attributes('aria-pressed')).toBe('false');
+      expect(wrapper.get('[role="group"][aria-labelledby="queue-sort-label"]').text()).toContain(
+        'Sort by',
+      );
+      expect(lastCall()?.[0]).toMatchObject({ sort: 'DUE_AT', overdue: false });
+    });
+
+    it('asks for the oldest first and keeps the choice in the address', async () => {
+      const { router } = await mountPage();
+
+      await sortChip('CREATED_AT').trigger('click');
+      await settle();
+
+      expect(lastCall()?.[0]).toMatchObject({ sort: 'CREATED_AT', page: 0 });
+      expect(router.currentRoute.value.query).toEqual({ sort: 'created_at' });
+      expect(sortChip('CREATED_AT').attributes('aria-pressed')).toBe('true');
+      expect(sortChip('DUE_AT').attributes('aria-pressed')).toBe('false');
+    });
+
+    it('leaves the default sort out of the address when it is chosen again', async () => {
+      const { router } = await mountPage('/agent?sort=created_at');
+
+      await sortChip('DUE_AT').trigger('click');
+      await settle();
+
+      expect(lastCall()?.[0]).toMatchObject({ sort: 'DUE_AT' });
+      expect(router.currentRoute.value.query).toEqual({});
+    });
+
+    it('does not reload when the sort that is already chosen is clicked', async () => {
+      await mountPage();
+      const callsBefore = vi.mocked(listAgentDisputes).mock.calls.length;
+
+      await sortChip('DUE_AT').trigger('click');
+      await settle();
+
+      expect(vi.mocked(listAgentDisputes).mock.calls.length).toBe(callsBefore);
+    });
+
+    it('asks only for overdue disputes when the toggle is on, and drops the filter when it is off', async () => {
+      const { router } = await mountPage();
+      expect(overdueToggle().attributes('aria-checked')).toBe('false');
+
+      await overdueToggle().trigger('click');
+      await settle();
+
+      expect(lastCall()?.[0]).toMatchObject({ overdue: true, page: 0 });
+      expect(router.currentRoute.value.query).toEqual({ overdue: '1' });
+      expect(overdueToggle().attributes('aria-checked')).toBe('true');
+
+      await overdueToggle().trigger('click');
+      await settle();
+
+      expect(lastCall()?.[0]).toMatchObject({ overdue: false });
+      expect(router.currentRoute.value.query).toEqual({});
+    });
+
+    it('keeps the tab and the search, and returns to the first page, when the filters change', async () => {
+      const { router } = await mountPage('/agent?tab=mine&q=fuel&page=3');
+
+      await sortChip('CREATED_AT').trigger('click');
+      await settle();
+      await overdueToggle().trigger('click');
+      await settle();
+
+      expect(router.currentRoute.value.query).toEqual({
+        tab: 'mine',
+        q: 'fuel',
+        sort: 'created_at',
+        overdue: '1',
+      });
+      expect(lastCall()?.[0]).toEqual({
+        queue: 'MINE',
+        q: 'fuel',
+        sort: 'CREATED_AT',
+        overdue: true,
+        page: 0,
+        size: 20,
+      });
+    });
+
+    it('restores the sort and the overdue filter from the address', async () => {
+      await mountPage('/agent?sort=created_at&overdue=1');
+
+      expect(lastCall()?.[0]).toMatchObject({ sort: 'CREATED_AT', overdue: true });
+      expect(sortChip('CREATED_AT').attributes('aria-pressed')).toBe('true');
+      expect(overdueToggle().attributes('aria-checked')).toBe('true');
+    });
+
+    it('falls back to the defaults for a sort or overdue value it does not know', async () => {
+      await mountPage('/agent?sort=newest&overdue=maybe');
+
+      expect(lastCall()?.[0]).toMatchObject({ sort: 'DUE_AT', overdue: false });
+    });
+
+    it('says nothing is overdue, and offers to show everything', async () => {
+      vi.mocked(listAgentDisputes).mockResolvedValue(EMPTY_PAGE);
+      const { router } = await mountPage('/agent?overdue=1');
+
+      const empty = wrapper.get('[data-testid="empty-overdue"]');
+      expect(empty.get('h2').text()).toBe('Nothing overdue. Nice work.');
+      expect(empty.text()).toContain('still within its due date');
+
+      vi.mocked(listAgentDisputes).mockResolvedValue(pageOf([FUEL]));
+      await wrapper.get('[data-testid="show-all"]').trigger('click');
+      await settle();
+
+      expect(router.currentRoute.value.query).toEqual({});
+      expect(lastCall()?.[0]).toMatchObject({ overdue: false });
+      expect(wrapper.find('[data-testid="empty-overdue"]').exists()).toBe(false);
+      expect(rows()).toHaveLength(1);
+    });
+
+    it('explains that a search with nothing found is also limited to overdue disputes', async () => {
+      vi.mocked(listAgentDisputes).mockResolvedValue(EMPTY_PAGE);
+      await mountPage('/agent?overdue=1&q=zzz');
+
+      expect(wrapper.get('h2').text()).toBe('No disputes match your search');
+      expect(wrapper.text()).toContain('Only overdue disputes are being shown');
+      expect(wrapper.find('[data-testid="empty-overdue"]').exists()).toBe(false);
     });
   });
 

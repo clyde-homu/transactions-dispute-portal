@@ -15,14 +15,14 @@ const CATALOGUE: ReasonCategory[] = [
     category: 'FRAUD',
     label: 'Fraud',
     reasons: [
-      { code: 'F01', label: 'I did not make this transaction' },
-      { code: 'F02', label: 'My card was lost or stolen' },
+      { code: 'F01', label: 'I did not make this transaction', slaDays: 10 },
+      { code: 'F02', label: 'My card was lost or stolen', slaDays: 10 },
     ],
   },
   {
     category: 'PROCESSING_ERROR',
     label: 'Processing error',
-    reasons: [{ code: 'P01', label: 'I was charged twice' }],
+    reasons: [{ code: 'P01', label: 'I was charged twice', slaDays: 15 }],
   },
 ];
 

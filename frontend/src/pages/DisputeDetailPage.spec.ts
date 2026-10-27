@@ -31,6 +31,7 @@ const DISPUTE: DisputeDetail = {
   merchantName: 'StreamBox Subscription',
   createdAt: '2026-10-24T12:30:00Z',
   updatedAt: '2026-10-25T08:05:41Z',
+  dueAt: '2026-11-08T12:30:00Z',
   description: 'StreamBox charged my card twice on the same day for one monthly subscription.',
   transaction: {
     id: '5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d',
@@ -168,6 +169,7 @@ describe('DisputeDetailPage', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     wrapper.unmount();
   });
@@ -266,6 +268,59 @@ describe('DisputeDetailPage', () => {
       expect(wrapper.get('[data-testid="timeline-message"]').text()).toBe(
         'We are looking into the duplicate charge with the merchant.',
       );
+    });
+  });
+
+  describe('the answer target', () => {
+    const target = () => wrapper.find('[data-testid="answer-target"]');
+    const targetText = () => target().get('[data-testid="answer-target-text"]').text();
+    // Faking only Date leaves the timers the page and Quasar rely on alone.
+    const setToday = (iso: string) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(iso));
+    };
+
+    it.each(['SUBMITTED', 'UNDER_REVIEW', 'AWAITING_CUSTOMER_INFO'] as const)(
+      'tells the customer when to expect an answer while the dispute is %s',
+      async (status) => {
+        setToday('2026-10-27T08:00:00Z');
+        vi.mocked(getDispute).mockResolvedValue({ ...DISPUTE, status });
+        await mountPage();
+
+        expect(targetText()).toBe('We aim to give you an answer by 08 Nov 2026.');
+        expect(target().get('.q-icon').attributes('aria-hidden')).toBe('true');
+      },
+    );
+
+    it.each(['RESOLVED_UPHELD', 'RESOLVED_DECLINED', 'WITHDRAWN'] as const)(
+      'shows nothing once the dispute is %s',
+      async (status) => {
+        setToday('2026-10-27T08:00:00Z');
+        vi.mocked(getDispute).mockResolvedValue({ ...DISPUTE, status, canWithdraw: false });
+        await mountPage();
+
+        expect(target().exists()).toBe(false);
+        expect(wrapper.text()).not.toContain('We aim');
+        expect(wrapper.text()).not.toContain('We aimed');
+      },
+    );
+
+    it('still promises the date on the day itself, even after the hour it was due', async () => {
+      // Due 14:30 on 8 November; it is 22:00 that evening in Johannesburg.
+      setToday('2026-11-08T20:00:00Z');
+      await mountPage();
+
+      expect(targetText()).toBe('We aim to give you an answer by 08 Nov 2026.');
+    });
+
+    it('switches to neutral wording once the date has passed, and never says overdue', async () => {
+      setToday('2026-11-20T08:00:00Z');
+      vi.mocked(getDispute).mockResolvedValue({ ...AWAITING, canRespond: false });
+      await mountPage();
+
+      expect(targetText()).toBe("We aimed to answer by 08 Nov 2026. We're still working on it.");
+      expect(wrapper.html().toLowerCase()).not.toContain('overdue');
+      expect(wrapper.text()).not.toMatch(/\blate\b/i);
     });
   });
 

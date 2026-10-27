@@ -46,6 +46,20 @@ describe('agent API', () => {
     expect(lastUrl()).toBe('/api/v1/agent/disputes?queue=ALL&status=SUBMITTED&status=UNDER_REVIEW');
   });
 
+  it('sends the sort order and the overdue filter', async () => {
+    await listAgentDisputes({ queue: 'ALL', overdue: true, sort: 'CREATED_AT', page: 1, size: 20 });
+
+    expect(lastUrl()).toBe(
+      '/api/v1/agent/disputes?queue=ALL&overdue=true&sort=CREATED_AT&page=1&size=20',
+    );
+  });
+
+  it('leaves out overdue=false, which means the same as no filter', async () => {
+    await listAgentDisputes({ queue: 'MINE', overdue: false, sort: 'DUE_AT' });
+
+    expect(lastUrl()).toBe('/api/v1/agent/disputes?queue=MINE&sort=DUE_AT');
+  });
+
   it('asks for the default queue when none is given', async () => {
     await listAgentDisputes();
 

@@ -39,3 +39,11 @@ export function apiDateDaysAgo(days: number, now: Date = new Date()): string {
   // South Africa has no daylight saving, so a day is always 24 hours.
   return toApiDate(new Date(now.getTime() - days * MS_PER_DAY));
 }
+
+/**
+ * True once the Johannesburg calendar day of `now` is after that of `iso`. The comparison is by
+ * day, not instant, so a date shown as "10 Nov" still reads as upcoming for all of 10 Nov.
+ */
+export function isPastDay(iso: string, now: Date = new Date()): boolean {
+  return toApiDate(now) > toApiDate(new Date(iso));
+}

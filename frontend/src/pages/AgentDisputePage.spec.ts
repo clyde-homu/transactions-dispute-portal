@@ -35,6 +35,8 @@ const BASE: AgentDisputeDetail = {
   assignedAgentName: null,
   createdAt: '2026-10-24T12:30:00Z',
   updatedAt: '2026-10-24T12:30:00Z',
+  dueAt: '2026-11-08T12:30:00Z',
+  overdue: false,
   description: 'StreamBox charged my card twice on the same day for one monthly subscription.',
   transaction: {
     id: '5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d',
@@ -265,6 +267,29 @@ describe('AgentDisputePage', () => {
       await mountPage();
 
       expect(get('back').attributes('href')).toBe('/agent');
+    });
+
+    it('shows the due date and time, with no overdue badge while the dispute is on time', async () => {
+      await mountPage();
+
+      expect(flat(get('due-at').text())).toBe('08 Nov 2026, 14:30');
+      expect(byId('overdue-badge').exists()).toBe(false);
+      expect(wrapper.text()).not.toContain('Overdue');
+    });
+
+    it('flags an overdue dispute with an icon and the word beside the due date', async () => {
+      vi.mocked(getAgentDispute).mockResolvedValue({
+        ...UNDER_REVIEW,
+        dueAt: '2026-10-24T10:20:00Z',
+        overdue: true,
+      });
+      await mountPage();
+
+      expect(flat(get('due-at').text())).toBe('24 Oct 2026, 12:20');
+      const badge = get('overdue-badge');
+      expect(badge.get('.q-chip__content').text()).toBe('Overdue');
+      expect(badge.get('.q-icon').text()).toBe('alarm');
+      expect(get('due').text()).toContain('Overdue');
     });
   });
 

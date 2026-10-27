@@ -33,6 +33,7 @@ export type CustomerResponseRequest = Schemas['CustomerResponseRequest'];
 
 // Agent back office (ADR 0006).
 export type AgentQueue = Schemas['AgentQueue'];
+export type AgentQueueSort = Schemas['AgentQueueSort'];
 export type AgentAction = Schemas['AgentAction'];
 export type ResolutionOutcome = Schemas['ResolutionOutcome'];
 export type RequestInfoRequest = Schemas['RequestInfoRequest'];

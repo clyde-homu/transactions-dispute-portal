@@ -31,6 +31,7 @@ const STREAMBOX: DisputeSummary = {
   merchantName: 'StreamBox Subscription',
   createdAt: '2026-10-24T12:30:00Z',
   updatedAt: '2026-10-25T08:05:41Z',
+  dueAt: '2026-11-08T12:30:00Z',
 };
 const FUEL: DisputeSummary = {
   id: '1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d',
@@ -43,6 +44,7 @@ const FUEL: DisputeSummary = {
   merchantName: 'Metro Fuel N1',
   createdAt: '2026-10-26T07:45:10Z',
   updatedAt: '2026-10-26T07:45:10Z',
+  dueAt: '2026-11-10T07:45:10Z',
 };
 
 function pageOf(items: DisputeSummary[], overrides: Partial<DisputePage> = {}): DisputePage {

@@ -236,8 +236,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Page through the dispute work queue, oldest first.
-         * @description `queue` filters on assignment: UNASSIGNED (no agent yet), MINE (assigned to the caller) or ALL. When `status` is absent, UNASSIGNED and MINE return open disputes only (SUBMITTED, UNDER_REVIEW, AWAITING_CUSTOMER_INFO) and ALL returns every status. Ordered by `createdAt` ascending, then `id` (first in, first out).
+         * Page through the dispute work queue, due soonest first by default.
+         * @description `queue` filters on assignment: UNASSIGNED (no agent yet), MINE (assigned to the caller) or ALL. When `status` is absent, UNASSIGNED and MINE return open disputes only (SUBMITTED, UNDER_REVIEW, AWAITING_CUSTOMER_INFO) and ALL returns every status. `overdue=true` keeps only open disputes past their `dueAt`. Ordering follows `sort`: DUE_AT (default) is `dueAt` ascending, then `createdAt`, then `id`; CREATED_AT is `createdAt` ascending, then `id` (first in, first out). See ADR 0007.
          */
         get: operations["listAgentDisputes"];
         put?: never;
@@ -460,6 +460,12 @@ export interface components {
             code: components["schemas"]["ReasonCode"];
             /** @example I was charged twice */
             label: string;
+            /**
+             * Format: int32
+             * @description Target resolution time in calendar days; `dueAt` = creation time + this value.
+             * @example 15
+             */
+            slaDays: number;
         };
         ReasonCategory: {
             category: components["schemas"]["ReasonCategoryCode"];
@@ -502,6 +508,11 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /**
+             * Format: date-time
+             * @description Date by which the bank aims to give the customer an answer: creation time plus the reason code's SLA days. Fixed at creation. Shown as a target, not as an overdue flag.
+             */
+            dueAt: string;
         };
         TimelineEvent: {
             /** Format: uuid */
@@ -552,6 +563,12 @@ export interface components {
          * @enum {string}
          */
         AgentQueue: "UNASSIGNED" | "MINE" | "ALL";
+        /**
+         * @description DUE_AT = `dueAt` ascending, then `createdAt`, then `id` (due soonest first). CREATED_AT = `createdAt` ascending, then `id` (first in, first out).
+         * @default DUE_AT
+         * @enum {string}
+         */
+        AgentQueueSort: "DUE_AT" | "CREATED_AT";
         /**
          * @description CLAIM when the dispute is SUBMITTED and unassigned. REQUEST_INFO and RESOLVE when it is UNDER_REVIEW and assigned to the caller.
          * @enum {string}
@@ -609,6 +626,13 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /**
+             * Format: date-time
+             * @description Creation time plus the reason code's SLA days. Fixed at creation.
+             */
+            dueAt: string;
+            /** @description True when the dispute is open (SUBMITTED, UNDER_REVIEW or AWAITING_CUSTOMER_INFO) and the current time is after `dueAt`. Closed disputes are never overdue. Computed at read time. */
+            overdue: boolean;
         };
         AgentTimelineEvent: {
             /** Format: uuid */
@@ -1181,11 +1205,13 @@ export interface operations {
                      *         "reasons": [
                      *           {
                      *             "code": "F01",
-                     *             "label": "I didn't make this transaction"
+                     *             "label": "I didn't make this transaction",
+                     *             "slaDays": 10
                      *           },
                      *           {
                      *             "code": "F02",
-                     *             "label": "My card was lost or stolen"
+                     *             "label": "My card was lost or stolen",
+                     *             "slaDays": 10
                      *           }
                      *         ]
                      *       },
@@ -1195,7 +1221,8 @@ export interface operations {
                      *         "reasons": [
                      *           {
                      *             "code": "A01",
-                     *             "label": "I didn't authorise this debit order"
+                     *             "label": "I didn't authorise this debit order",
+                     *             "slaDays": 10
                      *           }
                      *         ]
                      *       },
@@ -1205,11 +1232,13 @@ export interface operations {
                      *         "reasons": [
                      *           {
                      *             "code": "P01",
-                     *             "label": "I was charged twice"
+                     *             "label": "I was charged twice",
+                     *             "slaDays": 15
                      *           },
                      *           {
                      *             "code": "P02",
-                     *             "label": "The amount is wrong"
+                     *             "label": "The amount is wrong",
+                     *             "slaDays": 15
                      *           }
                      *         ]
                      *       },
@@ -1219,15 +1248,18 @@ export interface operations {
                      *         "reasons": [
                      *           {
                      *             "code": "C01",
-                     *             "label": "I didn't receive the goods or service"
+                     *             "label": "I didn't receive the goods or service",
+                     *             "slaDays": 30
                      *           },
                      *           {
                      *             "code": "C02",
-                     *             "label": "I cancelled, but I'm still being charged"
+                     *             "label": "I cancelled, but I'm still being charged",
+                     *             "slaDays": 30
                      *           },
                      *           {
                      *             "code": "C03",
-                     *             "label": "My refund never arrived"
+                     *             "label": "My refund never arrived",
+                     *             "slaDays": 30
                      *           }
                      *         ]
                      *       }
@@ -1293,7 +1325,8 @@ export interface operations {
                      *           "currency": "ZAR",
                      *           "merchantName": "Metro Fuel N1",
                      *           "createdAt": "2026-10-26T07:45:10Z",
-                     *           "updatedAt": "2026-10-26T07:45:10Z"
+                     *           "updatedAt": "2026-10-26T07:45:10Z",
+                     *           "dueAt": "2026-11-10T07:45:10Z"
                      *         },
                      *         {
                      *           "id": "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f",
@@ -1305,7 +1338,8 @@ export interface operations {
                      *           "currency": "ZAR",
                      *           "merchantName": "StreamBox Subscription",
                      *           "createdAt": "2026-10-24T12:30:00Z",
-                     *           "updatedAt": "2026-10-25T08:05:41Z"
+                     *           "updatedAt": "2026-10-25T08:05:41Z",
+                     *           "dueAt": "2026-11-08T12:30:00Z"
                      *         }
                      *       ],
                      *       "page": 0,
@@ -1367,6 +1401,7 @@ export interface operations {
                      *       "merchantName": "Metro Fuel N1",
                      *       "createdAt": "2026-10-26T07:45:10Z",
                      *       "updatedAt": "2026-10-26T07:45:10Z",
+                     *       "dueAt": "2026-11-10T07:45:10Z",
                      *       "description": "I was quoted R1000 for fuel at the pump but my card was charged R1250.",
                      *       "transaction": {
                      *         "id": "3c2b1a09-8f7e-4d6c-b5a4-938271605f4e",
@@ -1474,6 +1509,7 @@ export interface operations {
                      *       "merchantName": "StreamBox Subscription",
                      *       "createdAt": "2026-10-24T12:30:00Z",
                      *       "updatedAt": "2026-10-25T08:05:41Z",
+                     *       "dueAt": "2026-11-08T12:30:00Z",
                      *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
                      *       "transaction": {
                      *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
@@ -1551,6 +1587,7 @@ export interface operations {
                      *       "merchantName": "StreamBox Subscription",
                      *       "createdAt": "2026-10-24T12:30:00Z",
                      *       "updatedAt": "2026-10-26T08:12:03Z",
+                     *       "dueAt": "2026-11-08T12:30:00Z",
                      *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
                      *       "transaction": {
                      *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
@@ -1654,6 +1691,7 @@ export interface operations {
                      *       "merchantName": "StreamBox Subscription",
                      *       "createdAt": "2026-10-24T12:30:00Z",
                      *       "updatedAt": "2026-10-26T09:20:00Z",
+                     *       "dueAt": "2026-11-08T12:30:00Z",
                      *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
                      *       "transaction": {
                      *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
@@ -1733,6 +1771,13 @@ export interface operations {
                  */
                 q?: string;
                 /**
+                 * @description `true` returns only overdue disputes (open and past `dueAt`). `false` or absent applies no filter.
+                 * @example true
+                 */
+                overdue?: boolean;
+                /** @example DUE_AT */
+                sort?: components["schemas"]["AgentQueueSort"];
+                /**
                  * @description Zero-based page index.
                  * @example 0
                  */
@@ -1759,6 +1804,22 @@ export interface operations {
                      * @example {
                      *       "items": [
                      *         {
+                     *           "id": "4c5d6e7f-8a9b-4c0d-9e1f-2a3b4c5d6e7f",
+                     *           "reference": "DSP-2026-000005",
+                     *           "status": "SUBMITTED",
+                     *           "reasonCode": "A01",
+                     *           "reasonLabel": "I didn't authorise this debit order",
+                     *           "disputedAmount": "499.00",
+                     *           "currency": "ZAR",
+                     *           "merchantName": "FitLife Gym Debit Order",
+                     *           "customerName": "Pieter van der Merwe",
+                     *           "assignedAgentName": null,
+                     *           "createdAt": "2026-10-14T10:20:00Z",
+                     *           "updatedAt": "2026-10-14T10:20:00Z",
+                     *           "dueAt": "2026-10-24T10:20:00Z",
+                     *           "overdue": true
+                     *         },
+                     *         {
                      *           "id": "1d2c3b4a-5f6e-4a7b-8c9d-0e1f2a3b4c5d",
                      *           "reference": "DSP-2026-000008",
                      *           "status": "SUBMITTED",
@@ -1770,12 +1831,14 @@ export interface operations {
                      *           "customerName": "Thandi Mokoena",
                      *           "assignedAgentName": null,
                      *           "createdAt": "2026-10-26T07:45:10Z",
-                     *           "updatedAt": "2026-10-26T07:45:10Z"
+                     *           "updatedAt": "2026-10-26T07:45:10Z",
+                     *           "dueAt": "2026-11-10T07:45:10Z",
+                     *           "overdue": false
                      *         }
                      *       ],
                      *       "page": 0,
                      *       "size": 20,
-                     *       "totalItems": 1,
+                     *       "totalItems": 2,
                      *       "totalPages": 1
                      *     }
                      */
@@ -1895,6 +1958,8 @@ export interface operations {
                      *       "assignedAgentName": "Lerato Dlamini",
                      *       "createdAt": "2026-10-24T12:30:00Z",
                      *       "updatedAt": "2026-10-25T10:15:00Z",
+                     *       "dueAt": "2026-11-08T12:30:00Z",
+                     *       "overdue": false,
                      *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
                      *       "transaction": {
                      *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",
@@ -1999,6 +2064,8 @@ export interface operations {
                      *       "assignedAgentName": "Lerato Dlamini",
                      *       "createdAt": "2026-10-24T12:30:00Z",
                      *       "updatedAt": "2026-10-26T10:02:00Z",
+                     *       "dueAt": "2026-11-08T12:30:00Z",
+                     *       "overdue": false,
                      *       "description": "StreamBox charged my card twice on the same day for one monthly subscription.",
                      *       "transaction": {
                      *         "id": "5e8a1c3d-7b2f-4a9e-8c6d-0f1e2a3b4c5d",

@@ -20,3 +20,14 @@ export const STATUS_APPEARANCE: Record<DisputeStatus, { icon: string; color: str
   RESOLVED_DECLINED: { icon: 'cancel', color: 'negative' },
   WITHDRAWN: { icon: 'undo', color: 'grey-8' },
 };
+
+/** Statuses a dispute can still move on from, so it still has a due date worth showing. */
+const OPEN_STATUSES: ReadonlySet<DisputeStatus> = new Set([
+  'SUBMITTED',
+  'UNDER_REVIEW',
+  'AWAITING_CUSTOMER_INFO',
+]);
+
+export function isOpenStatus(status: DisputeStatus): boolean {
+  return OPEN_STATUSES.has(status);
+}

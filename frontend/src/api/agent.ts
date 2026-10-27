@@ -3,6 +3,7 @@ import type {
   AgentDisputeDetail,
   AgentDisputePage,
   AgentQueue,
+  AgentQueueSort,
   DisputeStatus,
   RequestInfoRequest,
   ResolveDisputeRequest,
@@ -14,6 +15,7 @@ export type {
   AgentDisputePage,
   AgentDisputeSummary,
   AgentQueue,
+  AgentQueueSort,
   AgentTimelineEvent,
   RequestInfoRequest,
   ResolutionOutcome,
@@ -27,6 +29,10 @@ export interface AgentQueueQuery {
   status?: readonly DisputeStatus[];
   /** Case-insensitive "contains" on reference, merchant name or customer name. */
   q?: string;
+  /** `true` keeps only open disputes past their due date; `false` or absent applies no filter. */
+  overdue?: boolean;
+  /** Defaults to DUE_AT (due soonest) on the server; CREATED_AT is first in, first out. */
+  sort?: AgentQueueSort;
   /** Zero-based page index. */
   page?: number;
   /** 1 to 100. */
@@ -35,7 +41,7 @@ export interface AgentQueueQuery {
 
 const disputePath = (id: string) => `/agent/disputes/${encodeURIComponent(id)}`;
 
-/** Oldest first (first in, first out). */
+/** Due soonest first, unless `sort` asks for the oldest first. */
 export async function listAgentDisputes(
   query: AgentQueueQuery = {},
   signal?: AbortSignal,
@@ -45,6 +51,9 @@ export async function listAgentDisputes(
       queue: query.queue,
       status: query.status?.length ? [...query.status] : undefined,
       q: query.q || undefined,
+      // `overdue=false` means the same as leaving it out, so only the filter itself is sent.
+      overdue: query.overdue ? true : undefined,
+      sort: query.sort,
       page: query.page,
       size: query.size,
     },
