@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.clydehomu.disputes.dispute.domain.DisputeAction;
 import com.clydehomu.disputes.dispute.domain.DisputeStatus;
+import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
@@ -22,14 +23,14 @@ class AgentDisputeSearchTest {
             value = AgentQueue.class,
             names = {"UNASSIGNED", "MINE"})
     void withoutAStatusFilterTheUnassignedAndMineQueuesShowOnlyOpenDisputes(AgentQueue queue) {
-        AgentDisputeSearch search = AgentDisputeSearch.of(queue, AGENT, Set.of(), null);
+        AgentDisputeSearch search = AgentDisputeSearch.of(queue, AGENT, Set.of(), null, null);
 
         assertThat(search.statuses()).containsExactlyInAnyOrderElementsOf(OPEN);
     }
 
     @Test
     void theAllQueueWithoutAStatusFilterShowsEveryStatus() {
-        AgentDisputeSearch search = AgentDisputeSearch.of(AgentQueue.ALL, AGENT, Set.of(), null);
+        AgentDisputeSearch search = AgentDisputeSearch.of(AgentQueue.ALL, AGENT, Set.of(), null, null);
 
         assertThat(search.statuses()).as("empty means no status filter").isEmpty();
     }
@@ -39,7 +40,7 @@ class AgentDisputeSearchTest {
     void anExplicitStatusFilterIsKeptAsGivenForEveryQueue(AgentQueue queue) {
         Set<DisputeStatus> wanted = Set.of(DisputeStatus.RESOLVED_UPHELD, DisputeStatus.WITHDRAWN);
 
-        AgentDisputeSearch search = AgentDisputeSearch.of(queue, AGENT, wanted, "mokoena");
+        AgentDisputeSearch search = AgentDisputeSearch.of(queue, AGENT, wanted, "mokoena", null);
 
         assertThat(search.statuses()).containsExactlyInAnyOrderElementsOf(wanted);
         assertThat(search.queue()).isEqualTo(queue);
@@ -50,12 +51,30 @@ class AgentDisputeSearchTest {
     @Test
     void theOpenDefaultIsExactlyTheStatusesThatAreOpen() {
         for (DisputeStatus status : DisputeStatus.values()) {
-            assertThat(AgentDisputeSearch.of(AgentQueue.MINE, AGENT, Set.of(), null)
+            assertThat(AgentDisputeSearch.of(AgentQueue.MINE, AGENT, Set.of(), null, null)
                             .statuses()
                             .contains(status))
                     .as(status.name())
                     .isEqualTo(status.isOpen());
         }
+    }
+
+    @Test
+    void theOverdueInstantIsKeptWhenAskedForAndAbsentOtherwise() {
+        Instant now = Instant.parse("2026-10-26T07:00:00Z");
+
+        assertThat(AgentDisputeSearch.of(AgentQueue.ALL, AGENT, Set.of(), null, now)
+                        .overdueAsOf())
+                .isEqualTo(now);
+        assertThat(AgentDisputeSearch.of(AgentQueue.ALL, AGENT, Set.of(), null, null)
+                        .overdueAsOf())
+                .as("no filter")
+                .isNull();
+    }
+
+    @Test
+    void sortsAreTheTwoDocumentedOnes() {
+        assertThat(AgentQueueSort.values()).containsExactly(AgentQueueSort.DUE_AT, AgentQueueSort.CREATED_AT);
     }
 
     @Test

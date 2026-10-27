@@ -3,6 +3,7 @@ package com.clydehomu.disputes.agent.api;
 import com.clydehomu.disputes.agent.application.AgentDisputeQuery;
 import com.clydehomu.disputes.agent.application.AgentDisputeService;
 import com.clydehomu.disputes.agent.domain.AgentQueue;
+import com.clydehomu.disputes.agent.domain.AgentQueueSort;
 import com.clydehomu.disputes.auth.application.AuthenticatedUser;
 import com.clydehomu.disputes.dispute.domain.DisputeStatus;
 import com.clydehomu.disputes.shared.security.AgentOnly;
@@ -42,12 +43,14 @@ public class AgentDisputeController {
             @RequestParam(defaultValue = "UNASSIGNED") AgentQueue queue,
             @RequestParam(name = "status", required = false) List<DisputeStatus> statuses,
             @RequestParam(name = "q", required = false) @Size(min = 1, max = 100) String text,
+            @RequestParam(defaultValue = "false") boolean overdue,
+            @RequestParam(defaultValue = "DUE_AT") AgentQueueSort sort,
             // The upper bound keeps page * size inside an int: a huge page would overflow the offset and fail as a 500.
             @RequestParam(defaultValue = "0") @Min(0) @Max(100_000) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         Set<DisputeStatus> wanted = statuses == null || statuses.isEmpty() ? Set.of() : EnumSet.copyOf(statuses);
         return PageResponse.of(
-                disputes.list(user.getId(), new AgentDisputeQuery(queue, wanted, text, page, size)),
+                disputes.list(user.getId(), new AgentDisputeQuery(queue, wanted, text, overdue, sort, page, size)),
                 AgentDisputeSummaryResponse::from);
     }
 

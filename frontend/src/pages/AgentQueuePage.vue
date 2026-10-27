@@ -5,13 +5,18 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 
 import { listAgentDisputes } from '@/api/agent';
-import type { AgentDisputeSummary, AgentQueue } from '@/api/types';
+import type { AgentDisputeSummary, AgentQueue, AgentQueueSort } from '@/api/types';
 import EmptyState from '@/components/EmptyState.vue';
 import ErrorState from '@/components/ErrorState.vue';
 import ListSkeleton from '@/components/ListSkeleton.vue';
 import MoneyAmount from '@/components/MoneyAmount.vue';
+import OverdueBadge from '@/components/OverdueBadge.vue';
 import StatusChip from '@/components/StatusChip.vue';
-import { AGENT_QUEUES, useAgentQueueFilters } from '@/composables/useAgentQueueFilters';
+import {
+  AGENT_QUEUE_SORTS,
+  AGENT_QUEUES,
+  useAgentQueueFilters,
+} from '@/composables/useAgentQueueFilters';
 import { useApiErrorMessage } from '@/composables/useApiErrorMessage';
 import { usePageTitle } from '@/composables/usePageTitle';
 import { usePagedQuery } from '@/composables/usePagedQuery';
@@ -24,7 +29,7 @@ const describeError = useApiErrorMessage();
 usePageTitle('pages.agentQueue.title');
 
 const filters = useAgentQueueFilters();
-const { tab, search, page } = filters;
+const { tab, search, sort, overdue, page } = filters;
 
 const pageModel = computed({
   get: () => page.value,
@@ -32,11 +37,23 @@ const pageModel = computed({
 });
 
 const query = usePagedQuery({
-  params: () => ({ queue: tab.value, search: search.value }),
+  params: () => ({
+    queue: tab.value,
+    search: search.value,
+    sort: sort.value,
+    overdue: overdue.value,
+  }),
   page: pageModel,
   fetch: (params, paging, signal) =>
     listAgentDisputes(
-      { queue: params.queue, q: params.search, page: paging.page, size: paging.size },
+      {
+        queue: params.queue,
+        q: params.search,
+        sort: params.sort,
+        overdue: params.overdue,
+        page: paging.page,
+        size: paging.size,
+      },
       signal,
     ),
   onPageOutOfRange: (lastPage) => void filters.apply({ page: lastPage }, 'replace'),
@@ -55,6 +72,10 @@ watch(search, (current) => {
 
 function selectTab(next: AgentQueue): void {
   if (next !== tab.value) void filters.apply({ tab: next });
+}
+
+function selectSort(next: AgentQueueSort): void {
+  if (next !== sort.value) void filters.apply({ sort: next });
 }
 
 // ---- view helpers ------------------------------------------------------------------------------
@@ -93,6 +114,12 @@ const columns = computed<QTableColumn<AgentDisputeSummary>[]>(() => [
     align: 'right',
   },
   { name: 'status', label: t('agentQueue.column.status'), field: 'status', align: 'left' },
+  {
+    name: 'due',
+    label: t('agentQueue.column.due'),
+    field: (row) => formatDate(row.dueAt),
+    align: 'left',
+  },
   {
     name: 'assigned',
     label: t('agentQueue.column.assignedTo'),
@@ -161,6 +188,35 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
       </template>
     </q-input>
 
+    <div class="queue-controls q-mt-sm" data-testid="queue-controls">
+      <div class="row items-center" role="group" aria-labelledby="queue-sort-label">
+        <span id="queue-sort-label" class="text-body2 muted q-mr-xs">
+          {{ t('agentQueue.sort.label') }}
+        </span>
+        <q-chip
+          v-for="option in AGENT_QUEUE_SORTS"
+          :key="option"
+          clickable
+          role="button"
+          :aria-pressed="sort === option"
+          :selected="sort === option"
+          :outline="sort !== option"
+          color="primary"
+          :text-color="sort === option ? 'white' : 'primary'"
+          icon-selected="check"
+          :label="t(`agentQueue.sort.${option}`)"
+          :data-testid="`sort-${option}`"
+          @click="selectSort(option)"
+        />
+      </div>
+      <q-toggle
+        :model-value="overdue"
+        :label="t('agentQueue.overdueOnly')"
+        data-testid="overdue-only"
+        @update:model-value="filters.apply({ overdue: $event })"
+      />
+    </div>
+
     <section
       class="q-mt-md"
       role="tabpanel"
@@ -180,7 +236,11 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
         v-else-if="query.items.value.length === 0 && search"
         icon="search_off"
         :title="t('agentQueue.emptyFilteredTitle')"
-        :description="t('agentQueue.emptyFilteredDescription')"
+        :description="
+          overdue
+            ? t('agentQueue.emptyFilteredOverdueDescription')
+            : t('agentQueue.emptyFilteredDescription')
+        "
       >
         <q-btn
           outline
@@ -189,6 +249,23 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
           :label="t('agentQueue.clearSearch')"
           data-testid="clear-search"
           @click="filters.apply({ search: '' })"
+        />
+      </EmptyState>
+
+      <EmptyState
+        v-else-if="query.items.value.length === 0 && overdue"
+        icon="thumb_up"
+        :title="t('agentQueue.emptyOverdueTitle')"
+        :description="t('agentQueue.emptyOverdueDescription')"
+        data-testid="empty-overdue"
+      >
+        <q-btn
+          outline
+          no-caps
+          color="primary"
+          :label="t('agentQueue.showAll')"
+          data-testid="show-all"
+          @click="filters.apply({ overdue: false })"
         />
       </EmptyState>
 
@@ -253,6 +330,14 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
               <StatusChip :status="cell.row.status" audience="agent" />
             </q-td>
           </template>
+          <template #body-cell-due="cell">
+            <q-td :props="cell">
+              <div class="due-cell">
+                <span class="due-cell__date">{{ cell.value }}</span>
+                <OverdueBadge v-if="cell.row.overdue" data-testid="overdue-badge" />
+              </div>
+            </q-td>
+          </template>
           <template #body-cell-assigned="cell">
             <q-td :props="cell">
               <span :class="{ muted: !cell.row.assignedAgentName }">{{ cell.value }}</span>
@@ -276,6 +361,9 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
                 {{ t('agentQueue.created', { date: formatDate(row.createdAt) }) }}
               </q-item-label>
               <q-item-label caption>
+                {{ t('agentQueue.due', { date: formatDate(row.dueAt) }) }}
+              </q-item-label>
+              <q-item-label caption>
                 {{
                   row.assignedAgentName
                     ? t('agentQueue.assignedTo', { name: row.assignedAgentName })
@@ -284,6 +372,7 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
               </q-item-label>
               <q-item-label class="q-mt-xs">
                 <StatusChip :status="row.status" audience="agent" />
+                <OverdueBadge v-if="row.overdue" data-testid="overdue-badge" />
               </q-item-label>
             </q-item-section>
             <q-item-section side top>
@@ -319,9 +408,27 @@ function onRowClick(event: Event, row: AgentDisputeSummary): void {
 </template>
 
 <style scoped lang="scss">
-// Eight columns need more room than the 60rem the other pages use.
+// Nine columns need more room than the 60rem the other pages use.
 .page-content--wide {
   max-width: 80rem;
+}
+
+.queue-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  align-items: center;
+}
+
+.due-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+
+  &__date {
+    white-space: nowrap;
+  }
 }
 
 .queue-table :deep(tbody tr) {

@@ -2,6 +2,7 @@ package com.clydehomu.disputes.agent.application;
 
 import com.clydehomu.disputes.agent.domain.AgentAction;
 import com.clydehomu.disputes.agent.domain.AgentDisputeSearch;
+import com.clydehomu.disputes.agent.domain.AgentQueueSort;
 import com.clydehomu.disputes.agent.domain.ResolutionOutcome;
 import com.clydehomu.disputes.agent.infrastructure.AgentDisputeSpecifications;
 import com.clydehomu.disputes.auth.domain.AppUser;
@@ -14,6 +15,8 @@ import com.clydehomu.disputes.dispute.domain.DisputeStateMachine;
 import com.clydehomu.disputes.dispute.domain.DisputeStatus;
 import com.clydehomu.disputes.dispute.infrastructure.DisputeRepository;
 import com.clydehomu.disputes.shared.error.NotFoundException;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Map;
@@ -36,24 +39,35 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AgentDisputeService {
 
-    // First in, first out; the id breaks ties so a page boundary never repeats or skips a row.
+    // Due soonest first, then oldest; the id breaks ties so a page boundary never repeats or skips a row.
+    private static final Sort DUE_SOONEST_FIRST =
+            Sort.by(Sort.Order.asc("dueAt"), Sort.Order.asc("createdAt"), Sort.Order.asc("id"));
+    // First in, first out, with the same tie-break.
     private static final Sort OLDEST_FIRST = Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"));
 
     private final DisputeRepository disputes;
     private final AppUserRepository users;
     private final DisputeStateMachine stateMachine;
+    private final Clock clock;
 
-    public AgentDisputeService(DisputeRepository disputes, AppUserRepository users, DisputeStateMachine stateMachine) {
+    public AgentDisputeService(
+            DisputeRepository disputes, AppUserRepository users, DisputeStateMachine stateMachine, Clock clock) {
         this.disputes = disputes;
         this.users = users;
         this.stateMachine = stateMachine;
+        this.clock = clock;
     }
 
     @Transactional(readOnly = true)
     public Page<AgentDisputeSummaryView> list(UUID agentId, AgentDisputeQuery query) {
-        AgentDisputeSearch search = AgentDisputeSearch.of(query.queue(), agentId, query.statuses(), query.text());
+        // One reading of the clock serves the filter and every row's flag, so a row cannot be kept by the filter and
+        // then reported as not overdue.
+        Instant now = clock.instant();
+        AgentDisputeSearch search = AgentDisputeSearch.of(
+                query.queue(), agentId, query.statuses(), query.text(), query.overdueOnly() ? now : null);
         Page<Dispute> page = disputes.findAll(
-                AgentDisputeSpecifications.search(search), PageRequest.of(query.page(), query.size(), OLDEST_FIRST));
+                AgentDisputeSpecifications.search(search),
+                PageRequest.of(query.page(), query.size(), order(query.sort())));
         // One lookup for the whole page instead of one per row.
         Set<UUID> userIds = page.getContent().stream()
                 .flatMap(dispute -> Stream.of(dispute.getCustomerId(), dispute.getAssignedAgentId()))
@@ -63,7 +77,15 @@ public class AgentDisputeService {
         return page.map(dispute -> new AgentDisputeSummaryView(
                 dispute,
                 names.get(dispute.getCustomerId()),
-                dispute.getAssignedAgentId() == null ? null : names.get(dispute.getAssignedAgentId())));
+                dispute.getAssignedAgentId() == null ? null : names.get(dispute.getAssignedAgentId()),
+                dispute.isOverdue(now)));
+    }
+
+    private static Sort order(AgentQueueSort sort) {
+        return switch (sort) {
+            case DUE_AT -> DUE_SOONEST_FIRST;
+            case CREATED_AT -> OLDEST_FIRST;
+        };
     }
 
     @Transactional(readOnly = true)
@@ -116,7 +138,12 @@ public class AgentDisputeService {
                 actions.add(action);
             }
         }
-        return new AgentDisputeView(dispute, currentTransactionStatus(dispute), displayNames(userIds), actions);
+        return new AgentDisputeView(
+                dispute,
+                currentTransactionStatus(dispute),
+                displayNames(userIds),
+                actions,
+                dispute.isOverdue(clock.instant()));
     }
 
     /** A withdrawn dispute does not block its transaction, so a newer dispute on it may be the current one. */

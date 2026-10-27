@@ -45,22 +45,22 @@ const CATALOGUE: ReasonCategory[] = [
     category: 'FRAUD',
     label: 'Fraud',
     reasons: [
-      { code: 'F01', label: 'I did not make this transaction' },
-      { code: 'F02', label: 'My card was lost or stolen' },
+      { code: 'F01', label: 'I did not make this transaction', slaDays: 10 },
+      { code: 'F02', label: 'My card was lost or stolen', slaDays: 10 },
     ],
   },
   {
     category: 'PROCESSING_ERROR',
     label: 'Processing error',
     reasons: [
-      { code: 'P01', label: 'I was charged twice' },
-      { code: 'P02', label: 'The amount is wrong' },
+      { code: 'P01', label: 'I was charged twice', slaDays: 15 },
+      { code: 'P02', label: 'The amount is wrong', slaDays: 15 },
     ],
   },
   {
     category: 'CONSUMER',
     label: 'Goods or services',
-    reasons: [{ code: 'C01', label: 'I did not receive the goods or service' }],
+    reasons: [{ code: 'C01', label: 'I did not receive the goods or service', slaDays: 30 }],
   },
 ];
 
@@ -77,6 +77,7 @@ const CREATED: DisputeDetail = {
   merchantName: 'Metro Fuel N1',
   createdAt: '2026-10-26T07:45:10Z',
   updatedAt: '2026-10-26T07:45:10Z',
+  dueAt: '2026-11-10T07:45:10Z',
   description: DESCRIPTION,
   transaction: {
     id: TRANSACTION.id,
@@ -155,6 +156,11 @@ async function reachReview() {
 }
 
 const activeId = () => document.activeElement?.id;
+// The text of the card a radio input sits in, which is where the reason and its hint are read.
+const optionText = (code: string) =>
+  (wrapper.get(`[data-testid="option-${code}"]`).element.closest('label')?.textContent ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 describe('RaiseDisputePage', () => {
   beforeEach(async () => {
@@ -166,6 +172,7 @@ describe('RaiseDisputePage', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     wrapper.unmount();
   });
@@ -310,6 +317,53 @@ describe('RaiseDisputePage', () => {
         '/transactions',
       );
       expect(router.currentRoute.value.name).toBe('dispute-new');
+    });
+
+    it('tells the customer, on the success screen, when we aim to give them an answer', async () => {
+      // The wording depends on today's date, so pin it to the day the dispute was raised.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-26T07:45:10Z'));
+      await mountPage();
+      await reachReview();
+      await wrapper.get('[data-testid="declaration"]').trigger('click');
+      await click('submit');
+
+      const target = wrapper.get('[data-testid="answer-target"]');
+      expect(target.get('[data-testid="answer-target-text"]').text()).toBe(
+        'We aim to give you an answer by 10 Nov 2026.',
+      );
+      expect(wrapper.get('[data-testid="success"]').text()).not.toContain('overdue');
+    });
+
+    it('shows how long each reason usually takes to resolve', async () => {
+      await mountPage();
+      await choose('FRAUD');
+      await click('continue');
+
+      expect(optionText('F01')).toContain('Usually resolved within 10 days');
+
+      await click('previous');
+      await choose('PROCESSING_ERROR');
+      await click('continue');
+
+      expect(optionText('P02')).toContain('Usually resolved within 15 days');
+    });
+
+    it('says "day" for a single day', async () => {
+      vi.mocked(listDisputeReasons).mockResolvedValue([
+        {
+          category: 'FRAUD',
+          label: 'Fraud',
+          reasons: [{ code: 'F01', label: 'I did not make this transaction', slaDays: 1 }],
+        },
+      ]);
+      await mountPage();
+      await choose('FRAUD');
+      await click('continue');
+
+      const label = optionText('F01');
+      expect(label).toContain('Usually resolved within 1 day');
+      expect(label).not.toContain('1 days');
     });
 
     it('lets the customer dispute part of the amount, with the same rules the server applies', async () => {

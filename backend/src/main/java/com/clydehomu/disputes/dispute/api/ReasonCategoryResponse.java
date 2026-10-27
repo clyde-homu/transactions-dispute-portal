@@ -8,7 +8,7 @@ import java.util.List;
 /** One group of the "raise a dispute" stepper: a category and the reasons in it. */
 public record ReasonCategoryResponse(ReasonCategory category, String label, List<ReasonResponse> reasons) {
 
-    public record ReasonResponse(DisputeReason code, String label) {}
+    public record ReasonResponse(DisputeReason code, String label, int slaDays) {}
 
     /** Every category in display order, each with its reasons in catalogue order. */
     static List<ReasonCategoryResponse> catalogue() {
@@ -17,7 +17,7 @@ public record ReasonCategoryResponse(ReasonCategory category, String label, List
                         category,
                         category.label(),
                         category.reasons().stream()
-                                .map(reason -> new ReasonResponse(reason, reason.label()))
+                                .map(reason -> new ReasonResponse(reason, reason.label(), reason.slaDays()))
                                 .toList()))
                 .toList();
     }

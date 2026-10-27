@@ -1,6 +1,7 @@
 package com.clydehomu.disputes.seed.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -29,6 +30,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Random;
@@ -76,17 +78,75 @@ class DemoDisputeSeederTest {
     }
 
     @Test
-    void pieterGetsOneDisputeUnderReview() {
+    void pieterGetsTwoUnclaimedDisputesAndOneUnderReview() {
         AppUser pieter = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(1));
 
         int created =
                 seeder.seedFor(pieter, agent, DemoCatalogue.CUSTOMERS.get(1).disputes(), NOW);
 
-        assertThat(created).isEqualTo(1);
-        Dispute dispute = saved(1).getFirst();
-        assertThat(dispute.getStatus()).isEqualTo(DisputeStatus.UNDER_REVIEW);
-        assertThat(dispute.getReason()).isEqualTo(DisputeReason.F02);
-        assertThat(dispute.getCustomerId()).isEqualTo(pieter.getId());
+        assertThat(created).isEqualTo(3);
+        List<Dispute> saved = saved(3);
+        assertThat(saved)
+                .extracting(Dispute::getReason, Dispute::getStatus)
+                .containsExactly(
+                        tuple(DisputeReason.C03, DisputeStatus.SUBMITTED),
+                        tuple(DisputeReason.F01, DisputeStatus.SUBMITTED),
+                        tuple(DisputeReason.F02, DisputeStatus.UNDER_REVIEW));
+        assertThat(saved).extracting(Dispute::getCustomerId).containsOnly(pieter.getId());
+        assertThat(saved).extracting(d -> d.getTransaction().getId()).doesNotHaveDuplicates();
+        assertThat(saved).extracting(Dispute::getAssignedAgentId).containsExactly(null, null, agent.getId());
+    }
+
+    @Test
+    void theOpenDemoDisputesIncludeOverdueAndNotYetDueOnesAcrossBothQueues() {
+        List<Dispute> all = new ArrayList<>();
+        for (CustomerSpec spec : DemoCatalogue.CUSTOMERS) {
+            AppUser customer = customerWithLedgers(spec);
+            seeder.seedFor(customer, agent, spec.disputes(), NOW);
+        }
+        ArgumentCaptor<Dispute> captor = ArgumentCaptor.forClass(Dispute.class);
+        verify(disputes, times(9)).save(captor.capture());
+        all.addAll(captor.getAllValues());
+
+        List<Dispute> open = all.stream().filter(d -> d.getStatus().isOpen()).toList();
+        List<Dispute> overdue = open.stream().filter(d -> d.isOverdue(NOW)).toList();
+        List<Dispute> notYetDue = open.stream().filter(d -> !d.isOverdue(NOW)).toList();
+
+        assertThat(overdue).as("something late for the badge").isNotEmpty();
+        assertThat(notYetDue).as("and something still on time").hasSizeGreaterThanOrEqualTo(2);
+        assertThat(overdue)
+                .allSatisfy(d -> assertThat(d.getDueAt())
+                        .as(d.getReference())
+                        .isBefore(NOW)
+                        .isEqualTo(d.getCreatedAt()
+                                .plus(Duration.ofDays(d.getReason().slaDays()))));
+        assertThat(overdue)
+                .as("the unclaimed queue, which is what an agent opens first, has a late one")
+                .anySatisfy(d -> assertThat(d.getAssignedAgentId()).isNull());
+        assertThat(notYetDue)
+                .as("and an on-time one")
+                .anySatisfy(d -> assertThat(d.getAssignedAgentId()).isNull());
+    }
+
+    @Test
+    void theDefaultQueueOrderPutsTheLateFraudCaseAboveTheOlderButLongerConsumerCase() {
+        AppUser pieter = customerWithLedgers(DemoCatalogue.CUSTOMERS.get(1));
+        seeder.seedFor(pieter, agent, DemoCatalogue.CUSTOMERS.get(1).disputes(), NOW);
+        List<Dispute> unclaimed =
+                saved(3).stream().filter(d -> d.getAssignedAgentId() == null).toList();
+
+        List<Dispute> oldestFirst = unclaimed.stream()
+                .sorted(Comparator.comparing(Dispute::getCreatedAt))
+                .toList();
+        List<Dispute> dueSoonestFirst = unclaimed.stream()
+                .sorted(Comparator.comparing(Dispute::getDueAt))
+                .toList();
+
+        assertThat(oldestFirst).extracting(Dispute::getReason).containsExactly(DisputeReason.C03, DisputeReason.F01);
+        assertThat(dueSoonestFirst)
+                .extracting(Dispute::getReason)
+                .as("sorting by due date changes the order")
+                .containsExactly(DisputeReason.F01, DisputeReason.C03);
     }
 
     @Test

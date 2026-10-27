@@ -13,6 +13,7 @@ import DisputeTimeline from '@/components/DisputeTimeline.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ErrorState from '@/components/ErrorState.vue';
 import MoneyAmount from '@/components/MoneyAmount.vue';
+import OverdueBadge from '@/components/OverdueBadge.vue';
 import StatusChip from '@/components/StatusChip.vue';
 import { useAgentActions, type ActionOutcome } from '@/composables/useAgentActions';
 import { useApiErrorMessage } from '@/composables/useApiErrorMessage';
@@ -204,6 +205,13 @@ function openResolve(): void {
               <dd class="q-ma-none">{{ formatDateTime(dispute.createdAt) }}</dd>
             </div>
             <div class="detail-list__row">
+              <dt class="muted">{{ t('agentDispute.fields.due') }}</dt>
+              <dd class="q-ma-none due" data-testid="due">
+                <span data-testid="due-at">{{ formatDateTime(dispute.dueAt) }}</span>
+                <OverdueBadge v-if="dispute.overdue" data-testid="overdue-badge" />
+              </dd>
+            </div>
+            <div class="detail-list__row">
               <dt class="muted">{{ t('agentDispute.fields.updated') }}</dt>
               <dd class="q-ma-none">{{ formatDateTime(dispute.updatedAt) }}</dd>
             </div>
@@ -293,6 +301,13 @@ function openResolve(): void {
   @media (width <= 599px) {
     grid-template-columns: 1fr;
   }
+}
+
+.due {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
 }
 
 .detail-list__text {

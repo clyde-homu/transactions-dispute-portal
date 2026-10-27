@@ -1,5 +1,10 @@
 package com.clydehomu.disputes.dispute.domain;
 
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 /** Where a dispute is in its life. The first three are open; the others are final. */
 public enum DisputeStatus {
     SUBMITTED(true),
@@ -22,5 +27,12 @@ public enum DisputeStatus {
 
     public boolean isClosed() {
         return !open;
+    }
+
+    /** Every open status, for queries that need the same rule as {@link #isOpen()} in a form a database can filter on. */
+    public static Set<DisputeStatus> openStatuses() {
+        return Arrays.stream(values())
+                .filter(DisputeStatus::isOpen)
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(DisputeStatus.class)));
     }
 }

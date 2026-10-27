@@ -19,6 +19,7 @@ import com.clydehomu.disputes.agent.application.AgentDisputeSummaryView;
 import com.clydehomu.disputes.agent.application.AgentDisputeView;
 import com.clydehomu.disputes.agent.domain.AgentAction;
 import com.clydehomu.disputes.agent.domain.AgentQueue;
+import com.clydehomu.disputes.agent.domain.AgentQueueSort;
 import com.clydehomu.disputes.agent.domain.ResolutionOutcome;
 import com.clydehomu.disputes.auth.application.AuthenticatedUser;
 import com.clydehomu.disputes.auth.domain.AppUser;
@@ -97,7 +98,7 @@ class AgentDisputeControllerTest {
     void listReturnsThePageEnvelopeWithQueueShapedItems() throws Exception {
         when(service.list(eq(AGENT_ID), any()))
                 .thenReturn(new PageImpl<>(
-                        List.of(new AgentDisputeSummaryView(submitted(), "Thandi Mokoena", null)),
+                        List.of(new AgentDisputeSummaryView(submitted(), "Thandi Mokoena", null, false)),
                         PageRequest.of(0, 20),
                         41));
 
@@ -120,6 +121,8 @@ class AgentDisputeControllerTest {
                 .andExpect(jsonPath("$.items[0].assignedAgentName").value((Object) null))
                 .andExpect(jsonPath("$.items[0].createdAt").value("2026-10-24T12:30:00Z"))
                 .andExpect(jsonPath("$.items[0].updatedAt").value("2026-10-24T12:30:00Z"))
+                .andExpect(jsonPath("$.items[0].dueAt").value("2026-11-08T12:30:00Z"))
+                .andExpect(jsonPath("$.items[0].overdue").value(false))
                 .andExpect(jsonPath("$.items[0].description").doesNotExist())
                 .andExpect(jsonPath("$.items[0].timeline").doesNotExist());
     }
@@ -132,7 +135,9 @@ class AgentDisputeControllerTest {
 
         ArgumentCaptor<AgentDisputeQuery> query = ArgumentCaptor.forClass(AgentDisputeQuery.class);
         verify(service).list(eq(AGENT_ID), query.capture());
-        assertThat(query.getValue()).isEqualTo(new AgentDisputeQuery(AgentQueue.UNASSIGNED, Set.of(), null, 0, 20));
+        assertThat(query.getValue())
+                .isEqualTo(new AgentDisputeQuery(
+                        AgentQueue.UNASSIGNED, Set.of(), null, false, AgentQueueSort.DUE_AT, 0, 20));
     }
 
     @Test
@@ -155,14 +160,75 @@ class AgentDisputeControllerTest {
                         AgentQueue.MINE,
                         Set.of(DisputeStatus.SUBMITTED, DisputeStatus.UNDER_REVIEW),
                         "mokoena",
+                        false,
+                        AgentQueueSort.DUE_AT,
                         2,
                         50));
+    }
+
+    @Test
+    void listPassesTheOverdueFilterAndTheCreatedAtSortToTheService() throws Exception {
+        when(service.list(any(), any())).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        mockMvc.perform(get(BASE)
+                        .param("overdue", "true")
+                        .param("sort", "CREATED_AT")
+                        .with(user(agent)))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentDisputeQuery> query = ArgumentCaptor.forClass(AgentDisputeQuery.class);
+        verify(service).list(eq(AGENT_ID), query.capture());
+        assertThat(query.getValue())
+                .isEqualTo(new AgentDisputeQuery(
+                        AgentQueue.UNASSIGNED, Set.of(), null, true, AgentQueueSort.CREATED_AT, 0, 20));
+    }
+
+    @Test
+    void overdueFalseAppliesNoFilterJustLikeLeavingItOut() throws Exception {
+        when(service.list(any(), any())).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        mockMvc.perform(get(BASE)
+                        .param("overdue", "false")
+                        .param("sort", "DUE_AT")
+                        .with(user(agent)))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentDisputeQuery> query = ArgumentCaptor.forClass(AgentDisputeQuery.class);
+        verify(service).list(eq(AGENT_ID), query.capture());
+        assertThat(query.getValue().overdueOnly()).isFalse();
+        assertThat(query.getValue().sort()).isEqualTo(AgentQueueSort.DUE_AT);
+    }
+
+    @Test
+    void anOverdueRowShowsItsDueDateAndTheFlagWhileAClosedOneStaysClear() throws Exception {
+        Dispute late = submitted();
+        Dispute closed = submitted();
+        at(3600).apply(closed, DisputeAction.WITHDRAW, Actor.customer(CUSTOMER_ID), null);
+        when(service.list(eq(AGENT_ID), any()))
+                .thenReturn(new PageImpl<>(
+                        List.of(
+                                new AgentDisputeSummaryView(late, "Thandi Mokoena", null, true),
+                                new AgentDisputeSummaryView(closed, "Thandi Mokoena", null, false)),
+                        PageRequest.of(0, 20),
+                        2));
+
+        mockMvc.perform(get(BASE).param("queue", "ALL").with(user(agent)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].dueAt").value("2026-11-08T12:30:00Z"))
+                .andExpect(jsonPath("$.items[0].overdue").value(true))
+                .andExpect(jsonPath("$.items[1].dueAt").value("2026-11-08T12:30:00Z"))
+                .andExpect(jsonPath("$.items[1].overdue").value(false));
     }
 
     @ParameterizedTest(name = "{0}={1} is rejected on field {0}")
     @CsvSource({
         "queue, EVERYONE",
         "queue, mine",
+        "sort, DUE_DATE",
+        "sort, due_at",
+        "sort, UPDATED_AT",
+        "overdue, maybe",
+        "overdue, nope",
         "page, -1",
         "page, 100001",
         "page, abc",
@@ -207,7 +273,7 @@ class AgentDisputeControllerTest {
         at(3600).apply(dispute, DisputeAction.CLAIM, lerato, null);
         at(7200).apply(dispute, DisputeAction.RESOLVE_UPHELD, lerato, "We upheld it.", "Acquirer confirmed.");
         when(service.get(AGENT_ID, DISPUTE_ID))
-                .thenReturn(new AgentDisputeView(dispute, DisputeStatus.RESOLVED_UPHELD, NAMES, Set.of()));
+                .thenReturn(new AgentDisputeView(dispute, DisputeStatus.RESOLVED_UPHELD, NAMES, Set.of(), false));
 
         mockMvc.perform(get(BASE + "/" + DISPUTE_ID).with(user(agent)))
                 .andExpect(status().isOk())
@@ -232,6 +298,20 @@ class AgentDisputeControllerTest {
     }
 
     @Test
+    void detailCarriesTheDueDateAndTheOverdueFlag() throws Exception {
+        Dispute dispute = submitted();
+        at(3600).apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), null);
+        when(service.get(AGENT_ID, DISPUTE_ID))
+                .thenReturn(new AgentDisputeView(
+                        dispute, DisputeStatus.UNDER_REVIEW, NAMES, Set.of(AgentAction.RESOLVE), true));
+
+        mockMvc.perform(get(BASE + "/" + DISPUTE_ID).with(user(agent)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dueAt").value("2026-11-08T12:30:00Z"))
+                .andExpect(jsonPath("$.overdue").value(true));
+    }
+
+    @Test
     void detailListsTheActionsTheCallerMayTake() throws Exception {
         Dispute dispute = submitted();
         at(3600).apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), null);
@@ -240,7 +320,8 @@ class AgentDisputeControllerTest {
                         dispute,
                         DisputeStatus.UNDER_REVIEW,
                         NAMES,
-                        Set.of(AgentAction.REQUEST_INFO, AgentAction.RESOLVE)));
+                        Set.of(AgentAction.REQUEST_INFO, AgentAction.RESOLVE),
+                        false));
 
         mockMvc.perform(get(BASE + "/" + DISPUTE_ID).with(user(agent)))
                 .andExpect(status().isOk())
@@ -288,7 +369,8 @@ class AgentDisputeControllerTest {
                         dispute,
                         DisputeStatus.UNDER_REVIEW,
                         NAMES,
-                        Set.of(AgentAction.REQUEST_INFO, AgentAction.RESOLVE)));
+                        Set.of(AgentAction.REQUEST_INFO, AgentAction.RESOLVE),
+                        false));
 
         mockMvc.perform(claimRequest())
                 .andExpect(status().isOk())
@@ -355,7 +437,8 @@ class AgentDisputeControllerTest {
         at(3600).apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), null);
         at(7200).apply(dispute, DisputeAction.REQUEST_INFO, Actor.agent(AGENT_ID), "Please send the till slip.");
         when(service.requestInfo(eq(AGENT_ID), eq(DISPUTE_ID), any()))
-                .thenReturn(new AgentDisputeView(dispute, DisputeStatus.AWAITING_CUSTOMER_INFO, NAMES, Set.of()));
+                .thenReturn(
+                        new AgentDisputeView(dispute, DisputeStatus.AWAITING_CUSTOMER_INFO, NAMES, Set.of(), false));
 
         mockMvc.perform(requestInfoRequest("  Please send the till slip.  "))
                 .andExpect(status().isOk())
@@ -391,7 +474,7 @@ class AgentDisputeControllerTest {
         verifyNoInteractions(service);
 
         when(service.requestInfo(any(), any(), any()))
-                .thenReturn(new AgentDisputeView(submitted(), DisputeStatus.SUBMITTED, NAMES, Set.of()));
+                .thenReturn(new AgentDisputeView(submitted(), DisputeStatus.SUBMITTED, NAMES, Set.of(), false));
         mockMvc.perform(requestInfoRequest("x".repeat(1000))).andExpect(status().isOk());
     }
 
@@ -427,7 +510,7 @@ class AgentDisputeControllerTest {
         at(3600).apply(dispute, DisputeAction.CLAIM, Actor.agent(AGENT_ID), null);
         at(7200).apply(dispute, DisputeAction.RESOLVE_DECLINED, Actor.agent(AGENT_ID), "Declined.", "Delivery proven.");
         when(service.resolve(eq(AGENT_ID), eq(DISPUTE_ID), any(), any(), any()))
-                .thenReturn(new AgentDisputeView(dispute, DisputeStatus.RESOLVED_DECLINED, NAMES, Set.of()));
+                .thenReturn(new AgentDisputeView(dispute, DisputeStatus.RESOLVED_DECLINED, NAMES, Set.of(), false));
 
         mockMvc.perform(resolveRequest("""
                         {"outcome":"DECLINED","customerMessage":"  Declined.  ","internalNote":"  Delivery proven.  "}

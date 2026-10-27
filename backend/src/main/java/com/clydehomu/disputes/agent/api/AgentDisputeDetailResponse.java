@@ -25,6 +25,8 @@ public record AgentDisputeDetailResponse(
         String assignedAgentName,
         Instant createdAt,
         Instant updatedAt,
+        Instant dueAt,
+        boolean overdue,
         String description,
         TransactionSummaryResponse transaction,
         List<AgentTimelineEventResponse> timeline,
@@ -46,6 +48,8 @@ public record AgentDisputeDetailResponse(
                 view.assignedAgentName(),
                 ApiFormats.timestamp(dispute.getCreatedAt()),
                 ApiFormats.timestamp(dispute.getUpdatedAt()),
+                ApiFormats.timestamp(dispute.getDueAt()),
+                view.overdue(),
                 dispute.getDescription(),
                 TransactionSummaryResponse.from(
                         dispute.getTransaction(), transactionStatus == null ? null : transactionStatus.name()),

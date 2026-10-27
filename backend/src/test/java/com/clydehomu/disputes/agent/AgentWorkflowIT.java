@@ -449,7 +449,16 @@ class AgentWorkflowIT extends PostgresIntegrationSupport {
                 lerato.postJson(unknown + "/resolve", resolve.replace("UPHELD", "MAYBE")), 400, "VALIDATION_FAILED");
         assertProblem(
                 lerato.postJson(unknown + "/resolve", resolve.replace("\"Note.\"", "\"\"")), 400, "VALIDATION_FAILED");
-        for (String query : List.of("?queue=EVERYONE", "?status=DONE", "?size=101", "?size=0", "?page=-1", "?q=")) {
+        for (String query : List.of(
+                "?queue=EVERYONE",
+                "?status=DONE",
+                "?sort=DUE_DATE",
+                "?sort=due_at",
+                "?overdue=maybe",
+                "?size=101",
+                "?size=0",
+                "?page=-1",
+                "?q=")) {
             assertThat(lerato.get("/api/v1/agent/disputes" + query).statusCode())
                     .as(query)
                     .isEqualTo(400);
@@ -459,14 +468,15 @@ class AgentWorkflowIT extends PostgresIntegrationSupport {
     // ---- the queue ----
 
     @Test
-    void theQueueIsOldestFirstPagedFilteredAndSearchable() {
+    void theQueueCanBeOldestFirstAndIsPagedFilteredAndSearchable() {
         TestBrowser thandi = signIn("thandi");
         TestBrowser lerato = signIn("lerato");
         Raised older = raise(thandi, 5);
         Raised newer = raise(thandi, 6);
 
-        // Oldest first, ties broken by id, with a stable page boundary.
-        HttpResponse<String> unassigned = lerato.get("/api/v1/agent/disputes?size=100");
+        // Oldest first on request (the default is due soonest, see AgentSlaQueueIT), ties broken by id, with a stable
+        // page boundary.
+        HttpResponse<String> unassigned = lerato.get("/api/v1/agent/disputes?size=100&sort=CREATED_AT");
         List<String> ids = JsonPath.read(unassigned.body(), "$.items[*].id");
         assertThat(ids).containsSubsequence(older.id(), newer.id()).doesNotHaveDuplicates();
         assertThat(JsonPath.<List<String>>read(unassigned.body(), "$.items[*].status"))

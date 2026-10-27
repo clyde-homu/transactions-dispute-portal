@@ -12,6 +12,7 @@ Customers view their bank transactions, dispute them and see a history of their 
 | Dispute them | A four-step form: category, specific reason, amount (the full amount or part of it) with a description, then a review with a declaration. On success you get a reference such as `DSP-2026-000123` and an explanation of what happens next. |
 | Historic view of disputes | A dispute history filterable by status and searchable by reference or merchant, and a detail page with a timeline of every status change. Open disputes can be withdrawn, and when the bank asks for more information the customer replies from the same page. |
 | Beyond the brief: back office | Agents sign in to a work queue (unassigned, mine, all), claim a dispute, ask the customer for information and resolve it as upheld or declined with a message to the customer and an internal note. Internal notes and agent names never appear in customer views. |
+| Beyond the brief: SLA tracking | Every dispute gets a due date from its reason's service level (10 days for fraud and authorisation, 15 for processing errors, 30 for goods and services). Agents' queue sorts by due date and flags overdue work, with an overdue-only filter; customers see the date as "we aim to give you an answer by", never as "overdue". |
 
 ### Screenshots
 
@@ -272,7 +273,7 @@ Known trade-offs are listed in [`docs/tech-debt.md`](docs/tech-debt.md).
 
 1. **Evidence uploads:** PDF and image attachments, with type checks by content, size limits, malware scanning and object storage (S3) behind a storage port.
 2. **Idempotency keys** on dispute creation, and **ETag / If-Match** on back-office actions so the client sees conflicts before it submits rather than after.
-3. **SLA tracking:** a due date per reason code, an overdue flag and sorting on the queue, and a simulated credit to the account when a dispute is upheld.
+3. **Refunds and SLA refinements:** a simulated credit to the account when a dispute is upheld, and an SLA clock that pauses while waiting on the customer and counts business days.
 4. **Back office depth:** reassignment and supervisor views, four-eyes approval for large refunds, and notifications to the customer when their dispute changes.
 5. **Identity:** OIDC (for example Keycloak) instead of demo users, with step-up authentication for sensitive actions.
 6. **Operations:** metrics and tracing (Micrometer with OpenTelemetry), distributed rate limiting at the edge, and the full end-to-end suite (not just the smoke subset) on a nightly schedule.

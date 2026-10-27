@@ -98,6 +98,19 @@ class DisputeServiceTest {
     }
 
     @Test
+    void createSetsTheDueDateFromTheReasonAndTheClock() {
+        BankTransaction fuel = transaction("1250.00", TransactionStatus.SETTLED, TransactionDirection.DEBIT, 3);
+        when(transactions.findOwnedByIdForUpdate(TRANSACTION_ID, CUSTOMER)).thenReturn(Optional.of(fuel));
+
+        Dispute dispute = service.create(CUSTOMER, command("250.00")).dispute();
+
+        // The command's reason is P02, a 15-day target.
+        assertThat(dispute.getCreatedAt()).isEqualTo(NOW);
+        assertThat(dispute.getDueAt()).isEqualTo(NOW.plus(Duration.ofDays(15)));
+        assertThat(dispute.isOverdue(NOW)).isFalse();
+    }
+
+    @Test
     void createLocksTheTransactionRowBeforeLookingForAnOpenDispute() {
         BankTransaction fuel = transaction("1250.00", TransactionStatus.SETTLED, TransactionDirection.DEBIT, 3);
         when(transactions.findOwnedByIdForUpdate(TRANSACTION_ID, CUSTOMER)).thenReturn(Optional.of(fuel));

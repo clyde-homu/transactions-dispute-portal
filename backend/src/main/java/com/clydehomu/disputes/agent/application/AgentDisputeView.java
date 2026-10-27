@@ -14,12 +14,14 @@ import java.util.UUID;
  *
  * @param transactionDisputeStatus the status of the transaction's current (non-withdrawn) dispute
  * @param userNames display names by user id, for the customer, the assignee and every actor on the timeline
+ * @param overdue whether the dispute is open and past its due date at the moment it was read
  */
 public record AgentDisputeView(
         Dispute dispute,
         DisputeStatus transactionDisputeStatus,
         Map<UUID, String> userNames,
-        Set<AgentAction> availableActions) {
+        Set<AgentAction> availableActions,
+        boolean overdue) {
 
     public String customerName() {
         return nameOf(dispute.getCustomerId());

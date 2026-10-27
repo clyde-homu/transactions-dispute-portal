@@ -80,6 +80,14 @@ export default {
     RESOLVED_DECLINED: 'Declined',
     WITHDRAWN: 'Withdrawn',
   },
+  // The back office flag. Customers never see this word: they get a target date (ADR 0007).
+  overdue: {
+    badge: 'Overdue',
+  },
+  answerTarget: {
+    upcoming: 'We aim to give you an answer by {date}.',
+    past: "We aimed to answer by {date}. We're still working on it.",
+  },
   transactionStatus: {
     PENDING: 'Pending',
     SETTLED: 'Settled',
@@ -191,6 +199,7 @@ export default {
         label: 'Reason',
         title: 'What went wrong?',
         hint: 'Choose the reason that describes it best.',
+        sla: 'Usually resolved within {days} day | Usually resolved within {days} days',
       },
       details: {
         label: 'Amount and details',
@@ -354,6 +363,12 @@ export default {
       ALL: 'All',
     },
     search: 'Search reference, merchant or customer',
+    sort: {
+      label: 'Sort by',
+      DUE_AT: 'Due soonest',
+      CREATED_AT: 'Oldest first',
+    },
+    overdueOnly: 'Overdue only',
     loading: 'Loading the queue',
     summary: 'Showing {from}–{to} of {total} disputes',
     pagination: 'Queue pages',
@@ -364,12 +379,14 @@ export default {
       reason: 'Reason',
       amount: 'Amount',
       status: 'Status',
+      due: 'Due',
       assignedTo: 'Assigned to',
       created: 'Raised',
     },
     unassigned: 'Unassigned',
     assignedTo: 'Assigned to {name}',
     created: 'Raised {date}',
+    due: 'Due {date}',
     errorTitle: 'We could not load the queue',
     empty: {
       UNASSIGNED: {
@@ -388,6 +405,12 @@ export default {
     },
     emptyFilteredTitle: 'No disputes match your search',
     emptyFilteredDescription: 'Check the spelling, or clear the search to see the whole tab.',
+    emptyFilteredOverdueDescription:
+      'Check the spelling, or clear the search. Only overdue disputes are being shown.',
+    emptyOverdueTitle: 'Nothing overdue. Nice work.',
+    emptyOverdueDescription:
+      'Every open dispute here is still within its due date. Switch the filter off to see them all.',
+    showAll: 'Show all open disputes',
     clearSearch: 'Clear search',
     goToUnassigned: 'Go to Unassigned',
   },
@@ -407,6 +430,7 @@ export default {
       assignedAgent: 'Assigned agent',
       transaction: 'Transaction',
       raised: 'Raised',
+      due: 'Due',
       updated: 'Last updated',
       description: 'Customer description',
     },

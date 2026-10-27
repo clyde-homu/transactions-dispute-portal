@@ -25,6 +25,7 @@ public record DisputeDetailResponse(
         String merchantName,
         Instant createdAt,
         Instant updatedAt,
+        Instant dueAt,
         String description,
         TransactionSummaryResponse transaction,
         List<TimelineEventResponse> timeline,
@@ -45,6 +46,7 @@ public record DisputeDetailResponse(
                 dispute.getTransaction().getMerchantName(),
                 ApiFormats.timestamp(dispute.getCreatedAt()),
                 ApiFormats.timestamp(dispute.getUpdatedAt()),
+                ApiFormats.timestamp(dispute.getDueAt()),
                 dispute.getDescription(),
                 TransactionSummaryResponse.from(
                         dispute.getTransaction(), transactionStatus == null ? null : transactionStatus.name()),

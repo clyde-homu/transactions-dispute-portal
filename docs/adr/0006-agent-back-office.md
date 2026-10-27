@@ -28,5 +28,5 @@ same dispute at once: two agents claiming it, or a customer withdrawing while an
   stale actions because they depend on status. It does not catch an agent acting on a page loaded
   long ago when the status has not changed. Exposing `version` as an `ETag` and requiring `If-Match`
   on agent actions is the next step.
-- No reassignment, SLA due dates or overdue flags yet; `dispute (status, created_at)` supports a
-  first-in, first-out queue now and can gain `due_at` later.
+- No reassignment yet. The queue was first in, first out on `dispute (status, created_at)`; since
+  ADR 0007 it defaults to due soonest first, and `sort=CREATED_AT` keeps the original order.

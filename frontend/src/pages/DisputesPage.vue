@@ -119,6 +119,8 @@ function onRowClick(event: Event, row: DisputeSummary): void {
       <div role="group" :aria-label="t('disputes.filters.statusLabel')" class="q-gutter-xs">
         <q-chip
           clickable
+          role="button"
+          :aria-pressed="statuses.length === 0"
           :selected="statuses.length === 0"
           :outline="statuses.length > 0"
           color="primary"
@@ -132,6 +134,8 @@ function onRowClick(event: Event, row: DisputeSummary): void {
           v-for="status in DISPUTE_STATUSES"
           :key="status"
           clickable
+          role="button"
+          :aria-pressed="statuses.includes(status)"
           :selected="statuses.includes(status)"
           :outline="!statuses.includes(status)"
           color="primary"

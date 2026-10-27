@@ -7,7 +7,10 @@ import com.clydehomu.disputes.shared.web.ApiFormats;
 import java.time.Instant;
 import java.util.UUID;
 
-/** One row of the dispute history. The merchant comes from the transaction, which the list query fetches. */
+/**
+ * One row of the dispute history. The merchant comes from the transaction, which the list query fetches. {@code dueAt}
+ * is the date the bank aims to answer by; customers get no overdue flag (ADR 0007).
+ */
 public record DisputeSummaryResponse(
         UUID id,
         String reference,
@@ -18,7 +21,8 @@ public record DisputeSummaryResponse(
         String currency,
         String merchantName,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        Instant dueAt) {
 
     static DisputeSummaryResponse from(Dispute dispute) {
         return new DisputeSummaryResponse(
@@ -31,6 +35,7 @@ public record DisputeSummaryResponse(
                 dispute.getCurrency(),
                 dispute.getTransaction().getMerchantName(),
                 ApiFormats.timestamp(dispute.getCreatedAt()),
-                ApiFormats.timestamp(dispute.getUpdatedAt()));
+                ApiFormats.timestamp(dispute.getUpdatedAt()),
+                ApiFormats.timestamp(dispute.getDueAt()));
     }
 }

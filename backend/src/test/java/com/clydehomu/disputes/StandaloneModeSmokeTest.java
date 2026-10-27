@@ -1,6 +1,7 @@
 package com.clydehomu.disputes;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -10,12 +11,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.clydehomu.disputes.auth.application.AuthenticatedUser;
 import com.clydehomu.disputes.auth.infrastructure.AppUserRepository;
+import com.clydehomu.disputes.dispute.domain.DisputeReason;
 import com.clydehomu.disputes.shared.config.AppProperties;
 import com.jayway.jsonpath.JsonPath;
 import jakarta.servlet.http.Cookie;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -113,7 +116,7 @@ class StandaloneModeSmokeTest {
                         + "('app_user', 'account', 'bank_transaction', 'dispute', 'dispute_event')",
                 Integer.class);
 
-        assertThat(applied).containsExactly("1", "2", "3");
+        assertThat(applied).containsExactly("1", "2", "3", "4");
         assertThat(tables).isEqualTo(5);
     }
 
@@ -187,6 +190,93 @@ class StandaloneModeSmokeTest {
         assertThat(assigned).isGreaterThanOrEqualTo(5);
         assertThat(agentEventsWithoutAnActor).isZero();
         assertThat(notes).as("one per seeded resolution").isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void everyStoredDueDateIsMandatoryAndFollowsTheSlaOfTheReason() {
+        String nullable = jdbc.queryForObject(
+                "select is_nullable from information_schema.columns "
+                        + "where table_name = 'dispute' and column_name = 'due_at'",
+                String.class);
+        List<Map<String, Object>> rows =
+                jdbc.queryForList("select reference, reason_code, created_at, due_at from dispute");
+
+        assertThat(nullable).isEqualTo("NO");
+        assertThat(rows).hasSizeGreaterThanOrEqualTo(9).allSatisfy(row -> {
+            Instant created = ((OffsetDateTime) row.get("created_at")).toInstant();
+            Instant due = ((OffsetDateTime) row.get("due_at")).toInstant();
+            DisputeReason reason = DisputeReason.valueOf((String) row.get("reason_code"));
+            assertThat(due).as(row.get("reference").toString()).isEqualTo(reason.dueAt(created));
+        });
+    }
+
+    @Test
+    void theSeededQueueShowsBothLateAndOnTimeWorkAndSortsByDueDateOnH2() throws Exception {
+        AuthenticatedUser lerato =
+                new AuthenticatedUser(users.findByUsername("lerato").orElseThrow());
+
+        String unassigned = mockMvc.perform(
+                        get("/api/v1/agent/disputes?size=100").with(user(lerato)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.overdue == true)]").isNotEmpty())
+                .andExpect(jsonPath("$.items[?(@.overdue == false)]").isNotEmpty())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(JsonPath.<List<String>>read(unassigned, "$.items[*].dueAt").stream()
+                        .map(Instant::parse)
+                        .toList())
+                .as("due soonest first")
+                .isSorted();
+        assertThat(JsonPath.<List<Boolean>>read(unassigned, "$.items[*].overdue")
+                        .getFirst())
+                .as("late work comes first")
+                .isTrue();
+
+        String createdOrder = mockMvc.perform(
+                        get("/api/v1/agent/disputes?size=100&sort=CREATED_AT").with(user(lerato)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(JsonPath.<List<String>>read(createdOrder, "$.items[*].createdAt").stream()
+                        .map(Instant::parse)
+                        .toList())
+                .as("first in, first out on request")
+                .isSorted();
+        assertThat(JsonPath.<List<String>>read(createdOrder, "$.items[*].id"))
+                .as("the two orders differ on the seeded data")
+                .isNotEqualTo(JsonPath.<List<String>>read(unassigned, "$.items[*].id"))
+                .containsExactlyInAnyOrderElementsOf(JsonPath.<List<String>>read(unassigned, "$.items[*].id"));
+
+        mockMvc.perform(get("/api/v1/agent/disputes?queue=ALL&overdue=true&size=100")
+                        .with(user(lerato)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.items[?(@.overdue == false)]").isEmpty())
+                .andExpect(jsonPath("$.items[?(@.status == 'RESOLVED_UPHELD')]").isEmpty());
+        mockMvc.perform(get("/api/v1/agent/disputes?sort=DUE_DATE").with(user(lerato)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("sort"));
+    }
+
+    @Test
+    void customersSeeTheDueDateOfTheirDisputesButNoOverdueFlagOnH2() throws Exception {
+        AuthenticatedUser thandi =
+                new AuthenticatedUser(users.findByUsername("thandi").orElseThrow());
+
+        String list = mockMvc.perform(get("/api/v1/disputes?size=100").with(user(thandi)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[*].dueAt").isNotEmpty())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(list).contains("\"dueAt\"").doesNotContain("overdue");
+        mockMvc.perform(get("/api/v1/dispute-reasons").with(user(thandi)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].reasons[0].slaDays").value(10))
+                .andExpect(jsonPath("$[3].reasons[2].slaDays").value(30));
     }
 
     @Test

@@ -7,6 +7,7 @@ import { useRoute } from 'vue-router';
 import { getDispute, withdrawDispute } from '@/api/disputes';
 import { isApiError } from '@/api/errors';
 import type { DisputeDetail } from '@/api/types';
+import AnswerTarget from '@/components/AnswerTarget.vue';
 import DisputeReplyForm from '@/components/DisputeReplyForm.vue';
 import DisputeTimeline from '@/components/DisputeTimeline.vue';
 import EmptyState from '@/components/EmptyState.vue';
@@ -17,6 +18,7 @@ import { useApiErrorMessage } from '@/composables/useApiErrorMessage';
 import { useAsyncData } from '@/composables/useAsyncData';
 import { usePageTitle } from '@/composables/usePageTitle';
 import { formatDateTime } from '@/utils/datetime';
+import { isOpenStatus } from '@/utils/disputeStatus';
 import { parseCents } from '@/utils/money';
 
 const { t } = useI18n();
@@ -51,6 +53,11 @@ const isFullAmount = computed(() => {
     parseCents(current.disputedAmount) === parseCents(current.transaction.amount)
   );
 });
+
+// A closed dispute has nothing left to promise, so the target only shows while it is open.
+const showAnswerTarget = computed(
+  () => dispute.value !== null && isOpenStatus(dispute.value.status),
+);
 
 // ---- reply to the disputes team -----------------------------------------------------------------
 
@@ -194,6 +201,12 @@ async function withdraw(): Promise<void> {
             <StatusChip :status="dispute.status" data-testid="status" />
           </div>
           <p class="q-mt-sm q-mb-none">{{ dispute.reasonLabel }}</p>
+          <AnswerTarget
+            v-if="showAnswerTarget"
+            :due-at="dispute.dueAt"
+            class="q-mt-sm"
+            data-testid="answer-target"
+          />
         </q-card-section>
         <q-separator />
         <q-card-section>

@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router';
 
 import { getTransaction } from '@/api/transactions';
 import type { ReasonCategoryCode } from '@/api/types';
+import AnswerTarget from '@/components/AnswerTarget.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import ErrorState from '@/components/ErrorState.vue';
 import MoneyAmount from '@/components/MoneyAmount.vue';
@@ -91,7 +92,11 @@ const stepIndex = computed(() => STEPS.indexOf(step.value));
 const vertical = computed(() => $q.screen.lt.md);
 
 const reasonOptions = computed(() =>
-  reasons.reasonsFor(form.category).map((reason) => ({ value: reason.code, label: reason.label })),
+  reasons.reasonsFor(form.category).map((reason) => ({
+    value: reason.code,
+    label: reason.label,
+    hint: t('raiseDispute.steps.reason.sla', { days: reason.slaDays }, reason.slaDays),
+  })),
 );
 
 const currency = computed(() => transaction.value?.currency ?? 'ZAR');
@@ -252,6 +257,11 @@ watch(
             {{ form.created.reference }}
           </p>
           <p class="muted q-mt-sm">{{ t('raiseDispute.success.referenceHint') }}</p>
+          <AnswerTarget
+            :due-at="form.created.dueAt"
+            class="justify-center"
+            data-testid="answer-target"
+          />
         </div>
 
         <h3 class="text-h6">{{ t('raiseDispute.success.nextHeading') }}</h3>

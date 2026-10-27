@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.clydehomu.disputes.agent.domain.AgentAction;
 import com.clydehomu.disputes.agent.domain.AgentQueue;
+import com.clydehomu.disputes.agent.domain.AgentQueueSort;
 import com.clydehomu.disputes.agent.domain.ResolutionOutcome;
 import com.clydehomu.disputes.auth.domain.AppUser;
 import com.clydehomu.disputes.auth.domain.Role;
@@ -33,6 +34,7 @@ import com.clydehomu.disputes.transaction.domain.TransactionDirection;
 import com.clydehomu.disputes.transaction.domain.TransactionStatus;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -68,7 +70,7 @@ class AgentDisputeServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AgentDisputeService(disputes, users, stateMachine);
+        service = new AgentDisputeService(disputes, users, stateMachine, CLOCK);
         when(users.findAllById(anyCollection()))
                 .thenReturn(List.of(
                         user(CUSTOMER, "thandi", "Thandi Mokoena", Role.CUSTOMER),
@@ -276,14 +278,14 @@ class AgentDisputeServiceTest {
     // ---- list ----
 
     @Test
-    void listReturnsOldestFirstWithNamesFromASingleLookup() {
+    void listCanBeOrderedOldestFirstAndGetsNamesFromASingleLookup() {
         Dispute unassigned = dispute(DisputeStatus.SUBMITTED);
         Dispute claimed = dispute(DisputeStatus.UNDER_REVIEW);
         when(disputes.findAll(any(Specification.class), any(Pageable.class)))
                 .thenAnswer(call -> new PageImpl<>(List.of(unassigned, claimed), call.getArgument(1), 41));
 
-        Page<AgentDisputeSummaryView> page =
-                service.list(LERATO, new AgentDisputeQuery(AgentQueue.ALL, Set.of(), null, 1, 2));
+        Page<AgentDisputeSummaryView> page = service.list(
+                LERATO, new AgentDisputeQuery(AgentQueue.ALL, Set.of(), null, false, AgentQueueSort.CREATED_AT, 1, 2));
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(disputes).findAll(any(Specification.class), pageable.capture());
@@ -298,13 +300,82 @@ class AgentDisputeServiceTest {
     }
 
     @Test
+    void listIsOrderedByDueDateThenCreationThenIdByDefault() {
+        when(disputes.findAll(any(Specification.class), any(Pageable.class)))
+                .thenAnswer(call -> new PageImpl<Dispute>(List.of(), call.getArgument(1), 0));
+
+        service.list(
+                LERATO,
+                new AgentDisputeQuery(AgentQueue.UNASSIGNED, Set.of(), null, false, AgentQueueSort.DUE_AT, 0, 20));
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(disputes).findAll(any(Specification.class), pageable.capture());
+        assertThat(pageable.getValue().getSort())
+                .isEqualTo(Sort.by(Sort.Order.asc("dueAt"), Sort.Order.asc("createdAt"), Sort.Order.asc("id")));
+    }
+
+    @Test
+    void listFlagsOnlyOpenDisputesPastTheirDueDateUsingTheClock() {
+        Dispute twentyDaysOld = dispute(DisputeStatus.SUBMITTED, NOW.minus(Duration.ofDays(20)));
+        Dispute fiveDaysOld = dispute(DisputeStatus.UNDER_REVIEW, NOW.minus(Duration.ofDays(5)));
+        Dispute lateButWithdrawn = dispute(DisputeStatus.WITHDRAWN, NOW.minus(Duration.ofDays(20)));
+        Dispute lateButUpheld = dispute(DisputeStatus.RESOLVED_UPHELD, NOW.minus(Duration.ofDays(20)));
+        when(disputes.findAll(any(Specification.class), any(Pageable.class)))
+                .thenAnswer(call -> new PageImpl<>(
+                        List.of(twentyDaysOld, fiveDaysOld, lateButWithdrawn, lateButUpheld), call.getArgument(1), 4));
+
+        Page<AgentDisputeSummaryView> page = service.list(
+                LERATO, new AgentDisputeQuery(AgentQueue.ALL, Set.of(), null, false, AgentQueueSort.DUE_AT, 0, 20));
+
+        assertThat(page.getContent())
+                .extracting(AgentDisputeSummaryView::overdue)
+                .as("a 15-day target is missed at 20 days and still open at 5; closed is never late")
+                .containsExactly(true, false, false, false);
+    }
+
+    @Test
+    void theOverdueFilterAndTheRowFlagsShareOneReadingOfTheClock() {
+        Clock clock = mock(Clock.class);
+        when(clock.instant()).thenReturn(NOW, NOW.plusSeconds(1));
+        AgentDisputeService timed = new AgentDisputeService(disputes, users, stateMachine, clock);
+        Dispute dueExactlyNow = dispute(DisputeStatus.SUBMITTED, NOW.minus(Duration.ofDays(15)));
+        when(disputes.findAll(any(Specification.class), any(Pageable.class)))
+                .thenAnswer(call -> new PageImpl<>(List.of(dueExactlyNow), call.getArgument(1), 1));
+
+        Page<AgentDisputeSummaryView> page = timed.list(
+                LERATO,
+                new AgentDisputeQuery(AgentQueue.UNASSIGNED, Set.of(), null, true, AgentQueueSort.DUE_AT, 0, 20));
+
+        // A second reading would return NOW + 1 s and flip this row to overdue after the filter had kept it.
+        assertThat(page.getContent().getFirst().overdue()).isFalse();
+        verify(clock, times(1)).instant();
+    }
+
+    @Test
+    void detailReportsOverdueFromTheClockAndClosedDisputesAreNeverOverdue() {
+        Dispute late = dispute(DisputeStatus.UNDER_REVIEW, NOW.minus(Duration.ofDays(16)));
+        when(disputes.findAnyDetailById(DISPUTE_ID)).thenReturn(Optional.of(late));
+        assertThat(service.get(LERATO, DISPUTE_ID).overdue()).isTrue();
+
+        AgentDisputeView resolved =
+                service.resolve(LERATO, DISPUTE_ID, ResolutionOutcome.UPHELD, "We reversed the charge.", "Checked.");
+        assertThat(resolved.overdue())
+                .as("resolving it, however late, ends the lateness")
+                .isFalse();
+
+        Dispute onTime = dispute(DisputeStatus.UNDER_REVIEW, NOW.minus(Duration.ofDays(3)));
+        when(disputes.findAnyDetailById(DISPUTE_ID)).thenReturn(Optional.of(onTime));
+        assertThat(service.get(LERATO, DISPUTE_ID).overdue()).isFalse();
+    }
+
+    @Test
     void listOfAnEmptyPageDoesNotFailAndDoesNotNeedNames() {
         when(disputes.findAll(any(Specification.class), any(Pageable.class)))
                 .thenAnswer(call -> new PageImpl<Dispute>(List.of(), call.getArgument(1), 0));
         when(users.findAllById(anyCollection())).thenReturn(List.of());
 
-        Page<AgentDisputeSummaryView> page =
-                service.list(LERATO, new AgentDisputeQuery(AgentQueue.MINE, Set.of(), "none", 0, 20));
+        Page<AgentDisputeSummaryView> page = service.list(
+                LERATO, new AgentDisputeQuery(AgentQueue.MINE, Set.of(), "none", false, AgentQueueSort.DUE_AT, 0, 20));
 
         assertThat(page.getContent()).isEmpty();
         assertThat(page.getTotalElements()).isZero();
@@ -320,6 +391,11 @@ class AgentDisputeServiceTest {
 
     /** A dispute walked to the wanted status through the real state machine; agent steps are Lerato's. */
     private Dispute dispute(DisputeStatus target) {
+        return dispute(target, NOW);
+    }
+
+    /** As above, but raised earlier; later steps still happen "now", as they would for a dispute left to age. */
+    private Dispute dispute(DisputeStatus target, Instant raisedAt) {
         BankTransaction transaction = new BankTransaction(
                 null,
                 "TXN-20261019-000151",
@@ -332,15 +408,16 @@ class AgentDisputeServiceTest {
                 "Fuel",
                 Channel.CARD);
         ReflectionTestUtils.setField(transaction, "id", TRANSACTION_ID);
-        Dispute dispute = stateMachine.create(
-                new NewDispute(
-                        transaction,
-                        CUSTOMER,
-                        DisputeReason.P02,
-                        new BigDecimal("250.00"),
-                        "The pump charged me too much for the fuel.",
-                        "DSP-2026-000003"),
-                Actor.customer(CUSTOMER));
+        Dispute dispute = new DisputeStateMachine(Clock.fixed(raisedAt, ZoneOffset.UTC))
+                .create(
+                        new NewDispute(
+                                transaction,
+                                CUSTOMER,
+                                DisputeReason.P02,
+                                new BigDecimal("250.00"),
+                                "The pump charged me too much for the fuel.",
+                                "DSP-2026-000003"),
+                        Actor.customer(CUSTOMER));
         ReflectionTestUtils.setField(dispute, "id", DISPUTE_ID);
         Actor lerato = Actor.agent(LERATO);
         switch (target) {

@@ -8,7 +8,10 @@ import com.clydehomu.disputes.shared.web.ApiFormats;
 import java.time.Instant;
 import java.util.UUID;
 
-/** One row of the work queue. {@code assignedAgentName} is null until an agent claims the dispute. */
+/**
+ * One row of the work queue. {@code assignedAgentName} is null until an agent claims the dispute; {@code overdue} is true
+ * for an open dispute past {@code dueAt}.
+ */
 public record AgentDisputeSummaryResponse(
         UUID id,
         String reference,
@@ -21,7 +24,9 @@ public record AgentDisputeSummaryResponse(
         String customerName,
         String assignedAgentName,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        Instant dueAt,
+        boolean overdue) {
 
     static AgentDisputeSummaryResponse from(AgentDisputeSummaryView view) {
         Dispute dispute = view.dispute();
@@ -37,6 +42,8 @@ public record AgentDisputeSummaryResponse(
                 view.customerName(),
                 view.assignedAgentName(),
                 ApiFormats.timestamp(dispute.getCreatedAt()),
-                ApiFormats.timestamp(dispute.getUpdatedAt()));
+                ApiFormats.timestamp(dispute.getUpdatedAt()),
+                ApiFormats.timestamp(dispute.getDueAt()),
+                view.overdue());
     }
 }
