@@ -20,10 +20,10 @@
         <java.version>25</java.version>
         <!-- Flyway has only verified H2 up to 2.3.232; the newer version Boot manages makes it log a warning on every standalone start. -->
         <h2.version>2.3.232</h2.version>
-        <springdoc.version>3.1.0</springdoc.version>
-        <spotless.version>3.10.4</spotless.version>
+        <springdoc.version>3.2.0</springdoc.version>
+        <spotless.version>3.11.0</spotless.version>
         <palantir-java-format.version>2.102.0</palantir-java-format.version>
-        <jacoco.version>0.8.15</jacoco.version>
+        <jacoco.version>0.8.16</jacoco.version>
     </properties>
 
     <dependencies>
